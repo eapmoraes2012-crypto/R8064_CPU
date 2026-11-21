@@ -19,7 +19,7 @@ The R8064 is a 64-bit CPU derived from the Z80, described in Verilog and impleme
 - MMU with instruction and data TLBs (Sv39, Sv48, Sv57 and Sv64), 4 KB instruction cache and 4 KB data cache (direct-mapped, 32-byte lines).
 - SDRAM controller for the board's embedded 32-bit memory (8 MB of physical memory, all reachable through the MMU).
 - Bus and I/O interface for the MSX slot, FIFOs and FM port; MSX ↔ R8064 message protocol on I/O ports 0Bh–0Dh (chapter 8).
-- 4-channel DMA (2 channels in the cartridge build), 5-master memory arbiter.
+- 4-channel DMA (2 channels in the reduced cartridge builds), 5-master memory arbiter.
 - Two privilege levels, system call and one-instruction context save (SVCTX/LDCTX) for multitasking (chapter 15).
 - Software: resident monitor, `R8064.COM` and the `r8064io` driver for MSX-DOS, and the R8064AS assembler that runs on the MSX (section 8.2).
 
@@ -39,7 +39,9 @@ The project is verified by simulation (iverilog/vvp and Verilator), by synthesis
 
 The cartridge REV48 has not been placed and routed yet (same core as the bench; the slot interface replaces the bench UART).
 
-**Tang Nano 20K build (REV47/REV48).** The cartridge is synthesized with the macros `R8064_NOFPU` (no FPU), `R8064_DMA2` (2 DMA channels), `R8064_AW32` and `R8064_NO_MD64`. With `R8064_AW32` only the low 32 address bits are implemented: PC, fetch address, effective addresses and branch targets wrap modulo 2^32 and the high bits read as 0. With `R8064_NO_MD64`, MLTSQ, MLTUQ, DIVSQ and DIVUQ do not exist: they raise the unimplemented-instruction exception (cause 7) if CR14.TE = 1; otherwise they are skipped as a NOP of their own length.
+**REV49 (2026-11-21): the cartridge build is the full core** (FPU, 64-bit MUL/DIV, 4 DMA channels, 64-bit addresses; no build macros). To make room for the FPU step ROM, the third register-file read port (`regfile64_d`, port D) moved from BSRAM to LUT RAM (frees 2 BSRAM). Yosys estimate (`synth_gowin`, cartridge top): about 20,060 LUT4-eq (LUT 17,222 + ALU 1,916 + 127 RAM16) and 45 of 46 BSRAM, against 12,469 and 46 for REV48; scaled to the REV48 Gowin result this is about 19,600 (≈ 94 %) — **not yet run in Gowin; timing at 57.27 MHz unknown**. If it does not fit or does not close timing: `make_gowin_pkg.py --reduced` (FPU kept; `R8064_DMA2 R8064_AW32 R8064_NO_MD64`, ≈ 14,900, 72 %) or `--reduced-nofpu` (the REV48 cartridge). Simulation regressions pass with the full core (SoC, exceptions, DMA, MMU, native mapper, cartridge + monitor); the timing bench (`bench/`) still uses the reduced macros.
+
+**Tang Nano 20K build (REV47/REV48; option `--reduced-nofpu` since REV49).** The cartridge is synthesized with the macros `R8064_NOFPU` (no FPU), `R8064_DMA2` (2 DMA channels), `R8064_AW32` and `R8064_NO_MD64`. With `R8064_AW32` only the low 32 address bits are implemented: PC, fetch address, effective addresses and branch targets wrap modulo 2^32 and the high bits read as 0. With `R8064_NO_MD64`, MLTSQ, MLTUQ, DIVSQ and DIVUQ do not exist: they raise the unimplemented-instruction exception (cause 7) if CR14.TE = 1; otherwise they are skipped as a NOP of their own length.
 
 Without these macros the core is the full 64-bit version, used in simulation. With yosys/nextpnr the cartridge uses 68% and does not route reliably; with Gowin EDA (Education edition) it closes with the figures in the table and generates the bitstream. The SDRAM clock phase was measured on the board: `SDR_PSDA` = 12 (270°), see section 7.
 

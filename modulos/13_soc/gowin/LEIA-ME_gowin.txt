@@ -1,3 +1,8 @@
+REV49 (21/11/2026): the package is now the FULL core (FPU, 64-bit MUL/DIV, 4 DMA channels, 64-bit addresses). Yosys estimate ~94 % of
+the logic and 45/46 BSRAM - not yet run in Gowin. If Gowin does not fit it or Fmax < 57.27 MHz, regenerate with
+  python3 make_gowin_pkg.py --reduced <out_dir> <src path>        (FPU kept, DMA2/AW32/NO_MD64)
+  python3 make_gowin_pkg.py --reduced-nofpu <out_dir> <src path>  (the REV48 cartridge)
+
 GOWIN EDA FLOW FOR THE CARTRIDGE (r8064_cart_top, Tang Nano 20K, GW2AR-LV18QN88C8/I7 version C)
 
 Why: with the open-source flow (yosys + nextpnr-himbaechel) the cartridge does not route reliably (REV47: 68 % of the LUTs and

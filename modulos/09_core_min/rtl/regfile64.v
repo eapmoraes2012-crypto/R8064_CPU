@@ -29,3 +29,26 @@ module regfile64(
     assign rdata_a = byp_a ? wq_d : ra_raw;
     assign rdata_b = byp_b ? wq_d : rb_raw;
 endmodule
+
+// regfile64_d - copy of the register file with ONE read port, in distributed RAM (LUT RAM) instead of BSRAM (REV49: frees the 2 BSRAM
+// that a 64 x 64 array takes, for the FPU ROM in the Tang Nano 20K cartridge build). Same behaviour as regfile64 port A (read-first + bypass).
+module regfile64_d(
+    input  wire        clk,
+    input  wire        we,
+    input  wire [5:0]  waddr,
+    input  wire [63:0] wdata,
+    input  wire [5:0]  raddr_a,
+    output wire [63:0] rdata_a
+);
+    (* ram_style = "distributed", syn_ramstyle = "distributed_ram" *) reg [63:0] mem_a [0:63] /* synthesis syn_ramstyle = "distributed_ram" */;
+    integer i;
+    initial for (i = 0; i < 64; i = i + 1) mem_a[i] = 64'd0;
+    reg [63:0] ra_raw, wq_d; reg byp_a;
+    always @(posedge clk) begin
+        if (we) mem_a[waddr] <= wdata;
+        ra_raw <= mem_a[raddr_a];
+        byp_a <= we && (waddr == raddr_a);
+        wq_d <= wdata;
+    end
+    assign rdata_a = byp_a ? wq_d : ra_raw;
+endmodule

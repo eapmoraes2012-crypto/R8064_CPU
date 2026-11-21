@@ -14,7 +14,7 @@ module tb_z80;
     initial begin
         $readmemh("z80mem.hex", mem); $readmemh("z80regs.hex", rg); $readmemh("z80fl.hex", fli);
         if (!$value$plusargs("cyc=%d", cyc)) cyc = 20000;
-        for (k = 0; k < 16; k = k + 1) begin dut.u_rf1.mem_a[k] = rg[k]; dut.u_rf1.mem_b[k] = rg[k]; dut.u_rf2.mem_a[k] = rg[k]; dut.u_rf2.mem_b[k] = rg[k]; end
+        for (k = 0; k < 16; k = k + 1) begin dut.u_rf1.mem_a[k] = rg[k]; dut.u_rf1.mem_b[k] = rg[k]; dut.u_rf2.mem_a[k] = rg[k]; end
     end
     always @(posedge clk) begin
         i_ack <= 0; d_ack <= 0;

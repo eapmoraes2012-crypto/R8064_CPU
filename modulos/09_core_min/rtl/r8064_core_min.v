@@ -292,7 +292,7 @@ module r8064_core_min #(
     wire [63:0] rf_a, rf_b, rf_d;
     wire        w_we; wire [5:0] w_addr; wire [63:0] w_data;
     regfile64 u_rf1(.clk(clk), .we(w_we), .waddr(w_addr), .wdata(w_data), .raddr_a(hold ? a_xr : iA_q), .raddr_b(hold ? b_xr : iB_q), .rdata_a(rf_a), .rdata_b(rf_b));
-    regfile64 u_rf2(.clk(clk), .we(w_we), .waddr(w_addr), .wdata(w_data), .raddr_a(hold ? d_xr : iD_q), .raddr_b(6'd0), .rdata_a(rf_d), .rdata_b());
+    regfile64_d u_rf2(.clk(clk), .we(w_we), .waddr(w_addr), .wdata(w_data), .raddr_a(hold ? d_xr : iD_q), .rdata_a(rf_d));   // REV49: 3rd read port in LUT RAM (frees 2 BSRAM)
 
     // ============ XR: read + forwarding ============
     wire        flush_x = flush;
