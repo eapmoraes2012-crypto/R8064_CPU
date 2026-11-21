@@ -55,3 +55,24 @@ issue 14 %, uop spacing (4 clocks, 5 after a load) 33 %, partial-write interlock
 stage A not ready (after taken branches and chains) 23 %, flush 1 %. The next limits are the fixed uop spacing (forwarding only from M
 and W) and the taken-branch refill. Z80 mode is unchanged (Dhrystone on the RTL: 4,277,104 clocks, the same as REV48 and the model).
 The hardware FPU kernels are not affected (they are limited by the FPU latency).
+
+## REV51 — branch prediction in the decoder (2026-11-21)
+
+Stage A predicts JP nn, JR e, CALL nn, RET (4-entry return stack) and backward JR cc / DJNZ / JP cc, and restarts the fetch at the
+target at once; X2 verifies (a wrong prediction costs the old flush). Instructions that write CRs / privileged ones now also refetch the
+following instructions after they complete (the prefetch may have run ahead of an MMU or mode change).
+
+| Benchmark | REV48 | REV50 | REV51 | REV51 vs R800 | REV51 vs Z80 |
+| --- | --- | --- | --- | --- | --- |
+| Dhrystone 2.1 (Dhrystones/s) | 3 515 | 4 162 | 4 563 | 2.93× | 17.0× |
+| DMIPS | 2.00 | 2.37 | 2.60 | | |
+| Sieve, 1 pass (s) | 0.115 | 0.0965 | 0.0899 | 4.44× | 24.6× |
+| Software float (FLOPS) | 3 758 | 4 472 | 4 812 | 4.11× | 22.1× |
+
+Dhrystone: 3,664 taken branches, 1,542 still flush (58 % predicted); 10.0 clocks per instruction. Z80 mode unchanged (4,277,104 clocks).
+
+Dependency-based issue with X3 forwarding (the other proposed step) was evaluated first with an upper-bound experiment: removing the
+spacing between instructions altogether (unsafe, only to measure) saved 1.3 % in Dhrystone (275,216 -> 271,563 clocks), because the
+4-clock floor is set by the decode/issue loop itself (uop ROM read -> register indices -> interlock, all registered: B issues at most every
+4 clocks, and a chain uop every 4 clocks). It was not implemented: the gain needs that loop restructured first (indices computed in A,
+B reloaded in the issue clock, next chain uop prefetched), and X3 forwarding puts the 64-bit adder in the operand path (Fmax risk).
