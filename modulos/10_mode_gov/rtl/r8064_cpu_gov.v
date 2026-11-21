@@ -1,5 +1,5 @@
 // r8064_cpu_gov.v - wrapper: core + mode register + timing governor + memory classifier.
-module r8064_cpu_gov #(parameter ROM_FILE = "gov_rom.mem")(
+module r8064_cpu_gov #(parameter ROM_FILE = "gov_rom.mem", parameter CPT = 16)(   // CPT: pipeline clocks per Z80 T-state (16 = 57.27 MHz, 12 = 42.95 MHz)
     input  wire        clk, rst, irq,
     output wire        i_req, input wire i_ack, output wire [63:0] i_addr, input wire [63:0] i_rdata,
     output wire        d_req, d_we, output wire [63:0] d_addr, output wire [1:0] d_size, output wire [63:0] d_wdata, output wire [7:0] d_be,
@@ -22,7 +22,7 @@ module r8064_cpu_gov #(parameter ROM_FILE = "gov_rom.mem")(
         .boundary(bnd), .native64(native64), .clk_sel(clk_sel), .is_z80(is_z80), .is_rom(is_rom), .busy(mode_busy), .s1990_idx(), .s1990_other_we());
     mem_class u_mc(.clk(clk), .rst(rst), .active(!native64 && !is_z80), .is_rom(is_rom), .phase(ph), .a8(a8), .map_we(map_we), .map_idx(map_idx), .map_val(map_val),
         .f_pc(fpc), .f_len(flen), .f_xcyc(fx), .f_romw(f_romw), .d_ev(d_ev), .d_addr(daddr), .d_size(dsz), .d_we(dwe), .add_ev(add_ev), .add_n(add_n));
-    timing_gov #(.ROM_FILE(ROM_FILE)) u_gov(.clk(clk), .rst(rst), .native64(native64), .is_z80(is_z80), .is_rom(is_rom), .clk_sel(clk_sel),
+    timing_gov #(.ROM_FILE(ROM_FILE), .CPT(CPT)) u_gov(.clk(clk), .rst(rst), .native64(native64), .is_z80(is_z80), .is_rom(is_rom), .clk_sel(clk_sel),
         .c_page(pg), .c_op(op), .c_port(prt), .c_xcyc(fx), .c_romw(f_romw), .add_ev(add_ev), .add_n(add_n), .phase(ph),
         .cv(gov_cv), .alt_ev(alt_ev), .go(go), .dbg_rem(rem));
     r8064_core_min u_core(.clk(clk), .rst(rst), .irq(irq), .i_req(i_req), .i_addr(i_addr), .i_ack(i_ack), .i_rdata(i_rdata),

@@ -1,3 +1,6 @@
+REV52 (21/11/2026): clock 42.9545 MHz (14.31818 x 3; CPT = 12). Package = REV51 core, 2 DMA channels, 32-bit addresses, no MD64, no FPU
+(with the FPU the REV51 build reached only 40.08 MHz). REV51 without FPU at 57.27 MHz: 57.50 MHz, 64 % logic (Gowin).
+
 REV49c (21/11/2026): package = FPU, 2 DMA channels (R8064_DMA2), 32-bit addresses (R8064_AW32), no MLTSQ/MLTUQ/DIVSQ/DIVUQ
 (R8064_NO_MD64). Yosys estimate ~84 % of the logic, 45/46 BSRAM - not yet run in Gowin. Other options: --full (everything, ~94 %),
 --reduced-nofpu (REV48 cartridge, 59 %).

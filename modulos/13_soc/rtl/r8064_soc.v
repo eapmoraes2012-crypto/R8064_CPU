@@ -8,7 +8,8 @@
 // 4-channel DMA (r8064_dma): registers CR19..CR30 (MTCR), status/IE on ports EDh/EEh/EFh, 5th master of the SDRAM arbiter; 16 KB exchange buffer (r8064_xbuf, MSX window).
 // BOOT (BOOT_WORDS > 0): after SDRAM initialization DMA channel 0 copies BOOT_WORDS words from the window buffer (offset 0; initial content = INIT_IMG=1: 8 files
 //   <INIT_PFX><lane>.hex) to SDRAM 0; the core stays in reset (boot_busy=1) until the end and the window belongs to the DMA during the copy. BOOT_WORDS=0: no boot (the core starts directly).
-module r8064_soc #(parameter FIFO_BASE = 8'hE8, parameter INIT_CYC = 20000, parameter REF_INT = 400, parameter BOOT_WORDS = 0, parameter INIT_IMG = 0)(
+module r8064_soc #(parameter FIFO_BASE = 8'hE8, parameter INIT_CYC = 20000, parameter REF_INT = 400, parameter BOOT_WORDS = 0, parameter INIT_IMG = 0,
+                   parameter CPT = 16)(   // CPT: clocks per Z80 T-state (16 = 57.27 MHz, 12 = 42.95 MHz); REF_INT must follow the clock (SDRAM refresh <= 7.8 us)
     input  wire        clk, rst, irq,
     // E/S
     input  wire        io_we, io_re, input wire [7:0] io_a, io_wd, output wire [7:0] io_rd, output wire io_oe,
@@ -62,7 +63,7 @@ module r8064_soc #(parameter FIFO_BASE = 8'hE8, parameter INIT_CYC = 20000, para
     // REV47: registered reset of the CPU system (rst | boot_busy goes into the clock-enable of the whole pipeline: was a critical path
     // with long routing). Releases the core 1 clock later.
     reg sys_rst_q; always @(posedge clk) sys_rst_q <= rst | boot_busy;
-    r8064_msx_sys #(.FIFO_BASE(FIFO_BASE)) u_sys(.clk(clk), .rst(sys_rst_q), .irq(irq & ~dma_irq),
+    r8064_msx_sys #(.FIFO_BASE(FIFO_BASE), .CPT(CPT)) u_sys(.clk(clk), .rst(sys_rst_q), .irq(irq & ~dma_irq),
         .i_req(c_i_req), .i_ack(c_i_ack), .i_paddr(c_i_pa), .i_rdata(c_i_rd),
         .d_req(c_d_req), .d_we(c_d_we), .d_paddr(c_d_pa), .d_size(c_d_sz), .d_wdata(c_d_wd), .d_be(c_d_be), .d_ack(c_d_ack), .d_rdata(c_d_rd),
         .i_hit(hit_i), .d_hit(hit_d), .d_wr_ok(wr_ok),

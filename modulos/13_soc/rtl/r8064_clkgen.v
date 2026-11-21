@@ -3,12 +3,12 @@
 //   SRC=0  clk_in = board crystal, 27 MHz        -> rPLL 27 x 17 / 8       = 57.375 MHz   (error +0.18 %; exact ratio 70/33 infeasible: PFD < 3 MHz)
 //   SRC=1  clk_in = 3.579545 MHz (external crystal/oscillator or MSX slot CLOCK) -> rPLL x 16 = 57.2727 MHz (exact, synchronous with the MSX)
 //   SRC=2  clk_in = 57.2727 MHz active oscillator directly (no PLL; locked = 1; clk_sdram = clk)
-//   SRC=3  clk_in = 14.31818 MHz (4 x 3.579545; e.g.: clk14m pin of the cartridge board) -> rPLL x4 = 57.2727 MHz (exact)
+//   SRC=3  clk_in = 14.31818 MHz (4 x 3.579545; e.g.: clk14m pin of the cartridge board) -> rPLL x MUL14: 4 = 57.2727 MHz, 3 = 42.9545 MHz (exact)
 // A "bare" 3.579545 MHz crystal needs an external oscillator (e.g. Pierce with 74HC04, or an oscillator module); the FPGA receives the already-square wave on clk_in.
 // VCO (SRC=0): 27/8*17*16 = 918 MHz ; (SRC=1): 3.579545*16*16 = 916.4 MHz - both within the GW2A's 500-1250 MHz.
 // rst: active high; stays at 1 until the PLL locks + 16 cycles of the generated clock (synchronous release).
 // Simulation (-DSIM): behavioral model that measures the period of clk_in and generates clk = clk_in * MUL / DIV.
-module r8064_clkgen #(parameter SRC = 1, parameter [3:0] SDR_PSDA = 4'd4)(   // SDR_PSDA: phase of clk_sdram in 22.5-degree steps (4 = 90 degrees); adjust in hardware
+module r8064_clkgen #(parameter SRC = 1, parameter [3:0] SDR_PSDA = 4'd4, parameter MUL14 = 4)(   // SDR_PSDA: phase of clk_sdram in 22.5-degree steps (4 = 90 degrees); adjust in hardware
     input  wire clk_in,
     input  wire rst_in,      // external asynchronous reset (active high), optional (0 if unused)
     output wire clk,
@@ -24,7 +24,7 @@ module r8064_clkgen #(parameter SRC = 1, parameter [3:0] SDR_PSDA = 4'd4)(   // 
         assign pll_lock = 1'b1;
     end else begin : g_pll
 `ifdef SIM
-        localparam MUL = (SRC == 0) ? 17 : (SRC == 3) ? 4 : 16;
+        localparam MUL = (SRC == 0) ? 17 : (SRC == 3) ? MUL14 : 16;
         localparam DIV = (SRC == 0) ? 8  : 1;
         real per, half, t_last; integer n; reg ck, lk;
         initial begin ck = 0; lk = 0; n = 0; t_last = 0; per = 0; half = 1; end
@@ -47,7 +47,7 @@ module r8064_clkgen #(parameter SRC = 1, parameter [3:0] SDR_PSDA = 4'd4)(   // 
             .FCLKIN       ((SRC == 0) ? "27" : (SRC == 3) ? "14.31818" : "3.579545"),
             .DEVICE       ("GW2AR-18C"),
             .IDIV_SEL     ((SRC == 0) ? 7  : 0),
-            .FBDIV_SEL    ((SRC == 0) ? 16 : (SRC == 3) ? 3 : 15),
+            .FBDIV_SEL    ((SRC == 0) ? 16 : (SRC == 3) ? (MUL14 - 1) : 15),   // VCO = fout x 16: 916 MHz (x4) / 687 MHz (x3), within 500-1250 MHz
             .ODIV_SEL     (16),
             .DYN_IDIV_SEL ("false"), .DYN_FBDIV_SEL ("false"), .DYN_ODIV_SEL ("false"),
             .PSDA_SEL     (SDR_PSDA_S), .DYN_DA_EN ("false"), .DUTYDA_SEL ("1000"),
