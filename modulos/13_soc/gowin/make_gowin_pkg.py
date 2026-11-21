@@ -5,8 +5,8 @@
 #   <out>/src/*.mem, *.hex      : ROM images (uop, decoder, governor, monitor), copied from ../pnr
 #   <out>/src/tangnano20k_cart.cst, r8064_cart.sdc, <out>/gowin_build.tcl, <out>/rodar_gowin.bat
 # Usage: python3 make_gowin_pkg.py [--reduced] <out_dir> [<absolute path of out_dir/src as Gowin will see it, e.g. C:/Users/me/Documents/R8064_gowin/src/>]
-#   Default (REV49b): the macros of ys_cart.ys = FPU and 4 DMA channels, 32-bit addresses (R8064_AW32), no MLTSQ/MLTUQ/DIVSQ/DIVUQ (R8064_NO_MD64).
-#   --full: no macros (64-bit addresses and 64-bit MUL/DIV too).  --reduced: also R8064_DMA2 (2 DMA channels).
+#   Default (REV49c): the macros of ys_cart.ys = FPU, 2 DMA channels (R8064_DMA2), 32-bit addresses (R8064_AW32), no MLTSQ/MLTUQ/DIVSQ/DIVUQ (R8064_NO_MD64).
+#   --full: no macros (4 DMA channels, 64-bit addresses and 64-bit MUL/DIV too).  --reduced: same as the default (kept for compatibility).
 #   --reduced-nofpu: the REV47/REV48 cartridge (R8064_NOFPU R8064_DMA2 R8064_AW32 R8064_NO_MD64).
 import os, re, shutil, sys
 

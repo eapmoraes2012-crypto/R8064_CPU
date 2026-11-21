@@ -1,6 +1,6 @@
-REV49b (21/11/2026): package = FPU + 4 DMA channels, 32-bit addresses (R8064_AW32), no MLTSQ/MLTUQ/DIVSQ/DIVUQ (R8064_NO_MD64).
-Yosys estimate ~87 % of the logic, 45/46 BSRAM. Other options: --full (everything, ~94 %), --reduced (+R8064_DMA2, ~72 %),
---reduced-nofpu (REV48).
+REV49c (21/11/2026): package = FPU, 2 DMA channels (R8064_DMA2), 32-bit addresses (R8064_AW32), no MLTSQ/MLTUQ/DIVSQ/DIVUQ
+(R8064_NO_MD64). Yosys estimate ~84 % of the logic, 45/46 BSRAM - not yet run in Gowin. Other options: --full (everything, ~94 %),
+--reduced-nofpu (REV48 cartridge, 59 %).
 
 REV49 (21/11/2026): the package is now the FULL core (FPU, 64-bit MUL/DIV, 4 DMA channels, 64-bit addresses). Yosys estimate ~94 % of
 the logic and 45/46 BSRAM - not yet run in Gowin. If Gowin does not fit it or Fmax < 57.27 MHz, regenerate with
