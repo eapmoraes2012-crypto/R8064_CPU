@@ -5,11 +5,12 @@ from z80model import Z
 HERE=os.path.dirname(os.path.abspath(__file__)); SIM=os.path.dirname(HERE); RTL=os.path.join(os.path.dirname(SIM),'rtl')
 VVP=os.path.join(HERE,'z80.vvp')
 def build():
-    f=['r8064_core_min.v','r8064_decode.v','r8064_decode_rom.v','regfile64.v','regmap_b.v','regmerge.v','alu_prep.v','alu_core_s.v']
+    f=['r8064_core_min.v','r8064_decode.v','r8064_decode_rom.v','regfile64.v','regmap_b.v','regmerge.v','alu_prep.v','alu_core_s.v','../../03_muldiv/rtl/mul_unit.v','../../03_muldiv/rtl/div_unit.v','../../08_fpu/rtl/fpu_unit.v','../../08_fpu/rtl/fpu_seq.v']
     r=subprocess.run(['iverilog','-g2012','-o',VVP,os.path.join(HERE,'tb_z80.v')]+[os.path.join(RTL,x) for x in f],capture_output=True,text=True)
     if r.returncode: print(r.stderr); sys.exit(1)
 for m in ('uop','mainctrl','rom_ed_a','rom_ed_b','amb_idx','ctrl','ctrl_b'):
     d=os.path.join(HERE,m+'.mem')
+    if os.path.lexists(d) and not os.path.exists(d): os.remove(d)      # dangling link (e.g. made on another machine)
     if not os.path.exists(d): os.symlink(os.path.join(SIM,m+'.mem'),d)
 RG='bcdehl'
 def gen(seed,nunits=40,mix=None):

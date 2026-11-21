@@ -39,13 +39,13 @@ module tb_meas;
     reg seen = 0;
     // wait clocks: the core stands still because of memory.
     //  data wait : a load/store in M without its acknowledge (hold caused by the data bus, not by MLT/DIV)
-    //  fetch wait: the decoder has no window (fewer than 4 bytes queued) or has decoded the instruction but its bytes have not all arrived
+    //  fetch wait: no candidate in stage B and stage A waits for instruction bytes (fewer than 4 at the aligner, or A's trailing bytes) (REV50)
     wire w_mm = dut.u_sys.u_cpu.u_core.m_mem, w_ack = dut.u_sys.u_cpu.u_core.d_ack, w_xing = dut.u_sys.u_cpu.u_core.xing, w_beat = dut.u_sys.u_cpu.u_core.beat;
-    wire w_dv = dut.u_sys.u_cpu.u_core.dv, w_wq = dut.u_sys.u_cpu.u_core.wq_v, w_hold = dut.u_sys.u_cpu.u_core.hold, w_bok = dut.u_sys.u_cpu.u_core.bytes_ok;
-    wire w_last = (dut.u_sys.u_cpu.u_core.ds == dut.u_sys.u_cpu.u_core.ds_last); wire [5:0] w_q = dut.u_sys.u_cpu.u_core.qcnt;
+    wire w_dv = dut.u_sys.u_cpu.u_core.dv, w_wq = dut.u_sys.u_cpu.u_core.wq_v, w_av = dut.u_sys.u_cpu.u_core.av, w_look = dut.u_sys.u_cpu.u_core.look;
+    wire w_lok = dut.u_sys.u_cpu.u_core.len_ok, w_cmp = dut.u_sys.u_cpu.u_core.a_cmpl_now; wire signed [7:0] w_avl = dut.u_sys.u_cpu.u_core.avl;
     wire w_seq = dut.u_sys.u_cpu.u_core.seq;
     wire dwait = w_mm && !(w_ack && (!w_xing || w_beat));
-    wire fwait = !dwait && !w_seq && ((!w_dv && !w_wq && w_q < 6'd4) || (w_dv && w_last && !w_bok && !w_hold));
+    wire fwait = !dwait && !w_seq && !w_dv && ((!w_av && !w_wq && w_avl < 8'sd4) || (w_av && !w_look && w_lok && !w_cmp));
     integer cw = 0, cwd = 0, wfirst = 0, wlast = 0, wdfirst = 0, wdlast = 0;
     always @(posedge clk) if (!rst) begin cw <= cw + ((dwait === 1'b1) || (fwait === 1'b1)); cwd <= cwd + (dwait === 1'b1); end
     always @(posedge clk) if (dbg_pc == lp && ppc != lp) begin

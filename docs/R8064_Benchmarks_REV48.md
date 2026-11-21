@@ -37,3 +37,21 @@ Hardware FPU (80-bit, full core only, native mode; not in the cartridge build `R
 - The native figures use Z80 code. The R8064 runs it at about 12.8 clocks per instruction (8-clock decoder floor plus waits), so DMIPS/MHz is
   lower than the R800's. Code built for the 64-bit instructions (wider registers, MUL/DIV, FPU) would go faster; this table does not cover it.
 - The R800 figures assume a program in internal RAM (no external-slot waits, no VDP pauses).
+
+## REV50 — overlapped decoder (2026-11-21)
+
+The decoder became two overlapped stages (A: capture, ROMs, length; B: decoded candidate and issue), and the partial-write interlock no
+longer waits for the producer to leave W (the register file bypass gives the merged value). Same binaries, same testbench (RTL, native mode):
+
+| Benchmark | REV48 | REV50 | Gain | REV50 vs R800 | REV50 vs Z80 |
+| --- | --- | --- | --- | --- | --- |
+| Dhrystone 2.1 (Dhrystones/s) | 3 515 | 4 162 | +18 % | 2.67× | 15.5× |
+| DMIPS | 2.00 | 2.37 | | | |
+| Sieve, 1 pass (s) | 0.115 | 0.0965 | 1.19× | 4.13× | 23.0× |
+| Software float (FLOPS) | 3 758 | 4 472 | +19 % | 3.81× | 20.6× |
+
+Clocks per instruction in Dhrystone: 13.0 → 11.0. Where the clocks go now (Dhrystone, 275,216 clocks, 24,980 instructions, 37,428 uops):
+issue 14 %, uop spacing (4 clocks, 5 after a load) 33 %, partial-write interlock 11 %, data waits 13 %, stage B load-to-issue 4 %,
+stage A not ready (after taken branches and chains) 23 %, flush 1 %. The next limits are the fixed uop spacing (forwarding only from M
+and W) and the taken-branch refill. Z80 mode is unchanged (Dhrystone on the RTL: 4,277,104 clocks, the same as REV48 and the model).
+The hardware FPU kernels are not affected (they are limited by the FPU latency).

@@ -4,8 +4,10 @@
 //   uop ROM in BSRAM, 64x64 register file (BSRAM, 3 reads), register mapping (EXX/EX AF), immediate extraction, forwarding (X2/M/W) with
 //   load-use interlock, 2-stage ALU (alu_prep/alu_core of module 01), address adder, branch-target adder, 64-bit LSU with
 //   alignment/extension, flags, branch resolved in X2 (flushes the queue), 64-bit timer + interrupt.
-// What is NOT here: semantics of the ~1,480 instructions (real uops), multi-step CALL/RET/PUSH/POP, I/O, MMU/FPU, partial-write hazards (WAW), 1 instruction/clock
-//   (this front-end issues 1 instruction every 4 clocks: ROM A/B -> ROM ctrl/uop in series; see results).
+// (The header above is from the first skeleton; since then the uops, chains, I/O, MMU interface, FPU and partial-write interlock were added.)
+// REV50: the decoder is two overlapped stages (A: capture + ROMs + length; B: decoded candidate + issue). Issue floor: 1 uop every 4 clocks
+//   (5 after load/IN/MUL-DIV-FPU), between instructions as well as inside a chain; before REV50 an instruction was only captured after the
+//   previous one was issued (>= 8 clocks per instruction).
 module r8064_core_min #(
     parameter UOP_FILE   = "uop.mem",
     parameter MAINC_FILE = "mainctrl.mem"
@@ -66,9 +68,10 @@ module r8064_core_min #(
     wire irq_new = (im != 2'd3);
     reg [63:0] npc, epc;   // epc: PC saved on interrupt acceptance; only the testbenches read it (synthesis discards it)
     // REGISTERED flush (cuts flags -> condition -> flush -> reset of the whole front-end): a taken branch costs +1 clock
-    reg [63:0] pc_last;   // PC of the last issued instruction: the next one is only issued >= 6 clocks after the last uop (decode), so on reaching M the uop is always that of the last instruction
+    // (REV50: pc_last removed - an younger instruction may already be issued when one faults in M; the PC travels with the uop: pc_x1..pc_m)
     reg c_en, c_user, c_te; wire ex_take_m; reg md_q, mdu_done; wire [7:0] mdu_f;   // declared here because they are used before the blocks that define them
     reg trap_q;                   // the candidate raises an exception instead of executing (privileged in user mode, not implemented, SCALL)
+    reg [63:0] ex_pcd;            // PC of the instruction that faulted in M (EPC)
     wire ex_take, ex_take_d; reg ex_act; reg [1:0] exk; reg ex_isd, ex_we; reg [2:0] ex_cs;
     wire flush_raw = flush_br | (irq_take & ~irq_new) | ex_take;
     reg  flush_q; reg [63:0] flush_tgt_q;
@@ -119,92 +122,163 @@ module r8064_core_min #(
             if (consume) qoff <= qoff + {1'b0, clen};
         end
     end
-    // aligner: 3 consecutive words starting at qoff[4:3], then byte shift (qoff[2:0]) -> 13-byte window
+    // aligner: 3 consecutive words starting at alo[4:3], then byte shift (alo[2:0]) -> 13-byte window.
+    // REV50: alo = decode offset of stage A (the instruction being decoded, or the next one once its length is known); qoff = queue head
+    // (first byte of the instruction in stage B). The bytes between qoff and alo stay in the queue until B consumes them.
+    reg [4:0] alo;
     reg [191:0] rot;
-    always @* case (qoff[4:3])
+    always @* case (alo[4:3])
         2'd0: rot = {qw2, qw1, qw0};
         2'd1: rot = {qw3, qw2, qw1};
         2'd2: rot = {qw0, qw3, qw2};
         default: rot = {qw1, qw0, qw3};
     endcase
-    wire [191:0] shf = rot >> {qoff[2:0], 3'b000};
+    wire [191:0] shf = rot >> {alo[2:0], 3'b000};
     wire [103:0] win = shf[103:0];
 
-    // ============ D: decode sequencer (4 phases) ============
-    reg [2:0]   ds;               // 0 capture, 1 ROM A/B, 2 ROM ctrl/uop, 3 issue (6 in the governed modes: length -> classifier -> timing table)
-    wire [2:0]  ds_last = gov_wait ? 3'd7 : 3'd5;   // 4 without governor: the register indices are registered before addressing the register file
-    reg         dv;               // dwin valid
-    reg [103:0] dwin;
-    reg [103:0] win_q; reg wq_v;      // window snapshot (cuts the queue -> aligner -> decoder ROM path)
-    reg [63:0]  dpc;              // address of the instruction being decoded
+    // ============ D: decoder in two overlapped stages (REV50) ============
+    // Stage A (decode): capture of the window (win_q), prefix removal (dwa), ED decoder ROMs, main-page ROM, uop ROM read, length.
+    // Stage B (issue): holds a COMPLETE decoded instruction (window, first uop, ED fields, PC, length); register indices, interlocks, issue.
+    // A works on instruction N+1 while B waits to issue N: as soon as the length of A's instruction is known, the aligner moves to the
+    // next one (alo), so the decode of consecutive instructions overlaps. Before REV50 the next instruction was only captured after the
+    // last one was issued (>= 8 clocks per instruction); now the floor is set by B (4 clocks, 5 after a load / IN / MUL-DIV-FPU uop,
+    // the same spacing as the uops of a chain, which the back end already handles).
+    // Governed modes (Z80/R800): B waits >= 4 clocks with the candidate stable before the issue (timing table + classifier latency).
+    reg         av;               // stage A holds an instruction (dwa)
+    reg [2:0]   as;               // clocks since dwa was loaded (saturates at 7)
+    reg         look;             // A's length is known and all its bytes are in dwa: the aligner points to the next instruction
+    reg [103:0] dwa;              // A window, prefixes removed
+    reg [103:0] win_q; reg wq_v;  // window snapshot (cuts the queue -> aligner -> decoder ROM path); wq_v: captured, waiting for dwa
+    reg [4:0]   apos, cpos;       // queue offsets of A's instruction and of the captured one
+    reg [63:0]  pca, cpc, npca;   // PCs: A's instruction, captured instruction, next one to capture
+    reg [1:0]   xya, banka; reg is_eda, is_cba, irq_enta;
+    reg         dv;               // stage B valid (candidate instruction)
+    reg [2:0]   bs;               // clocks since B was loaded (saturates at 7)
+    reg [103:0] dwin;             // B window
+    reg [63:0]  dpc;              // address of the instruction in B
+    reg [106:0] uB;               // first uop of the instruction in B
+    reg         edb_ill, edb_bk, edb_l12, edb_md;   // ED decoder fields of B's instruction
     // bank prefix: ED 0B (shadow) / ED 0E (N0-N3) / ED 0D (N4-N7) before an instruction of the ED page
-    reg [1:0]   bank;             // 0 none, 1 shadow, 2 N0-N3, 3 N4-N7 (registered at capture)
+    reg [1:0]   bank;             // 0 none, 1 shadow, 2 N0-N3, 3 N4-N7 (B)
     wire pfx_w = (win_q[7:0] == 8'hED) && (win_q[15:8] == 8'h0B || win_q[15:8] == 8'h0E || win_q[15:8] == 8'h0D);
     wire bank_on = (bank != 2'd0);
-    wire [7:0] b1 = dwin[7:0], b2 = dwin[15:8], b3 = dwin[23:16];
-    reg is_cb;                    // CB prefix: the uop comes from region 768 + second byte
+    wire banka_on = (banka != 2'd0);
+    wire [7:0] b1 = dwin[7:0], b2 = dwin[15:8], b3 = dwin[23:16];          // B
+    wire [7:0] a1 = dwa[7:0],  a2 = dwa[15:8],  a3 = dwa[23:16];           // A
+    reg is_cb;                    // CB prefix: the uop comes from region 768 + second byte (B)
     // DD / FD prefix (IX / IY): removed from the window on capture, like the bank prefix. The instruction uses the SAME uop as the main page:
     // the HL index (3) becomes IX/IY (9/10), except in the marked operands (u[90]: D and B; u[91]: A), and the uops with u[92] add the displacement d to the address.
     // DD/FD followed by DD, FD or ED is not treated as a prefix (executes as a 1-byte NOP and the next byte starts another instruction).
-    reg [1:0]   xy;               // 0 none, 1 IX, 2 IY
+    reg [1:0]   xy;               // 0 none, 1 IX, 2 IY (B)
     wire xy_on = (xy != 2'd0);
+    wire xya_on = (xya != 2'd0);
     wire pfx_xy = (win_q[7:0] == 8'hDD || win_q[7:0] == 8'hFD) && !(win_q[15:8] == 8'hDD || win_q[15:8] == 8'hFD || win_q[15:8] == 8'hED);
     wire [103:0] dwin_n = pfx_w ? {8'h00, win_q[103:16], 8'hED} : pfx_xy ? {8'h00, win_q[103:8]} : win_q;
-    reg is_ed;                    // registered on capture (cuts the 8-bit comparator off the clen path)
+    reg is_ed;                    // B
     wire [9:0] ed_id; wire ed_ill; wire [3:0] ed_len; wire [4:0] ed_nr, ed_nw; wire [1:0] ed_nio; wire [7:0] ed_ex; wire [1:0] ed_pen; wire ed_hc, ed_z80, ed_bk;
-    r8064_decode u_dec(.clk(clk), .b2(b2), .b3(b3), .id(ed_id), .illegal(ed_ill), .len(ed_len), .nr(ed_nr), .nw(ed_nw), .nio(ed_nio), .ex(ed_ex), .pen_code(ed_pen), .has_cond(ed_hc), .is_z80(ed_z80), .bankable(ed_bk));
+    r8064_decode u_dec(.clk(clk), .b2(a2), .b3(a3), .id(ed_id), .illegal(ed_ill), .len(ed_len), .nr(ed_nr), .nw(ed_nw), .nio(ed_nio), .ex(ed_ex), .pen_code(ed_pen), .has_cond(ed_hc), .is_z80(ed_z80), .bankable(ed_bk));
     reg [31:0] mainc [0:255];
     reg [106:0] uopm  [0:2047];
     initial begin $readmemh(MAINC_FILE, mainc); $readmemh(UOP_FILE, uopm); end
     reg [31:0] mainc_q; reg [106:0] uop_q;
     // micro-operation sequencer: u[49]=more uops, u[62:52]=address of the next one. Space: main 0-255, ED 256+id, CB 768-1023, DDCB/FDCB 1792-2047, chains 1024-1791
+    // The uop ROM has one port: B's chain (seq) has priority; A's first-uop read is repeated after the chain (u_mine says uop_q is A's).
     reg seq; reg [10:0] nxt_r; reg [2:0] seqc;
-    wire [10:0] base_a = irq_ent ? (im == 2'd2 ? 11'd601 : 11'd600) : is_ed ? (11'd256 + {1'b0, ed_id}) : is_cb ? (xy_on ? {3'b111, b3} : {3'b011, b2}) : {3'b000, b1};   // DD CB d op: region 1792 + op
+    wire [10:0] base_a = irq_enta ? (im == 2'd2 ? 11'd601 : 11'd600) : is_eda ? (11'd256 + {1'b0, ed_id}) : is_cba ? (xya_on ? {3'b111, a3} : {3'b011, a2}) : {3'b000, a1};   // DD CB d op: region 1792 + op
     wire [10:0] uaddr = seq ? nxt_r : base_a;
-    always @(posedge clk) begin mainc_q <= mainc[b1]; uop_q <= uopm[uaddr]; end
-    // registered length: the raw value (control ROM -> ED/main mux -> +prefix) is stable since ds=2 and is only consumed at ds_last (>=4);
-    // the register takes the BSRAM output and the 4-bit adder off the path of the PC adders (dpc+clen, qoff+clen)
-    wire [3:0] clen_raw = irq_ent ? 4'd0 : (is_ed ? (ed_ill ? 4'd2 : ed_len) : mainc_q[3:0]) + {3'd0, bank_on} + {3'd0, xy_on} + {3'd0, xy_on && mainc_q[4]};   // mainc[4]: operand (HL) -> +1 byte (d) wim DD/FD
-    reg [3:0] clen_r; always @(posedge clk) clen_r <= clen_raw;
+    always @(posedge clk) begin mainc_q <= mainc[a1]; uop_q <= uopm[uaddr]; end
+    // A length: main page valid 1 clock after dwa (mainc_q), ED page 2 clocks after (control ROM); registered for B (clen)
+    wire [3:0] clen_rawa = irq_enta ? 4'd0 : (is_eda ? (ed_ill ? 4'd2 : ed_len) : mainc_q[3:0]) + {3'd0, banka_on} + {3'd0, xya_on} + {3'd0, xya_on && mainc_q[4]};   // mainc[4]: operand (HL) -> +1 byte (d) with DD/FD
+    reg [3:0] clen_ra; always @(posedge clk) clen_ra <= clen_rawa;
+    wire len_ok = av && (irq_enta || (is_eda ? (as >= 3'd2) : (as >= 3'd1)));
+    wire base_ok = av && (irq_enta || !is_eda || (as >= 3'd2));
+    reg u_mine;                   // uop_q holds the first uop of A's instruction (A was not reloaded and the port was not used by a chain)
+    wire a_load;
+    reg [3:0] clen_r;
     assign clen = clen_r;
-    reg ifx_q; reg [7:0] ifd_q;
+    reg ifx_q; reg [7:0] ifd_q; reg ifxa_q; reg [7:0] ifda_q;
     reg hz_q;   // partial-write interlock (see below)
-    // REV48: the bytes seen in dwin lag the queue count by 2 clocks (win -> win_q -> dwin); qcnt only grows while an instruction waits
-    reg [5:0] qd1, qd2; always @(posedge clk) begin qd1 <= qcnt; qd2 <= qd1; end
-    wire bytes_ok = (qd2 >= {2'd0, clen});
-    wire issue = dv && (ds == ds_last) && !hold && !flush && (gov_go || seq) && (seqc == 3'd0) && !hz_q && !(ifx_q && !seq) && !trap_q && bytes_ok;
-    wire u_last = !uop_q[49];
+    // bytes available in the queue from the aligner position (alo) and from A's instruction (apos); the dwa window lags 2 clocks (win -> win_q -> dwa)
+    wire [4:0] adist = alo - qoff;
+    wire signed [7:0] avl = $signed({2'b00, qcnt}) - $signed({3'b000, adist});
+    wire [4:0] pdist = apos - qoff;
+    wire signed [7:0] avp = $signed({2'b00, qcnt}) - $signed({3'b000, pdist});
+    reg signed [7:0] avp1; always @(posedge clk) avp1 <= avp;
+    // A complete: length known and all its bytes already in dwa (or a fetch fault near it: B then takes it and raises the exception)
+    wire a_cmpl_now = len_ok && (avp1 >= $signed({4'd0, clen_rawa}));
+    reg  acq;
+    wire look_set = av && !look && a_cmpl_now;
+    wire [106:0] u = seq ? uop_q : uB;      // the current uop: B's first, then the chain's (ROM output)
+    wire b_ready = dv && (bs >= (gov_wait ? 3'd4 : 3'd2));
+    reg  pipe_empty_q, issue_q;   // registered: empty pipeline / issue in the previous clock (defined with the X2 stage)
+    reg [5:0] iA_q, iB_q, iD_q;   // registered register-file indices (defined with the issue fields)
+    reg  ser_q;                   // the last issued instruction changes state read by later decode/issue (CR, mode, I/O, EI/DI/IM, EXX): wait for an empty pipeline
+    reg  irq_arm_q;
+    wire issue = b_ready && !hold && !flush && (gov_go || seq) && (seqc == 3'd0) && !hz_q && !(ifx_q && !seq) && !trap_q &&
+                 !(!seq && (irq_arm_q || (ser_q && !(pipe_empty_q && !issue_q)))) && !((u[45] || u[46]) && !(pipe_empty_q && !issue_q));
+    // EXX / EX AF,AF' switch the register map AT the issue: they wait until no older instruction can still fault (a fault restarts the older one)
+    wire u_last = !u[49];
     assign consume = issue && u_last;
+    wire xfer = av && u_mine && (acq || ifxa_q) && (irq_enta ? (as >= 3'd1) : is_eda ? (as >= 3'd3) : (as >= 3'd2)) && !dv;   // A -> B
+    assign a_load = (irq_take && irq_new) || (wq_v && (!av || xfer));
+    always @(posedge clk) u_mine <= !rst && !flush && base_ok && !seq && !a_load;
     always @(posedge clk) begin
         if (rst || flush) begin seq <= 1'b0; seqc <= 3'd0; end
         else begin
             if (seqc != 3'd0 && !hold) seqc <= seqc - 3'd1;   // only counts when the pipeline advances (a hold freezes the producers)
-            if (issue && !u_last) begin seq <= 1'b1; nxt_r <= uop_q[62:52]; seqc <= (uop_q[10] && (uop_q[8] || uop_q[50] || uop_q[98])) ? 3'd4 : 3'd3; end   // 4 clocks between uops (X3/M forwarding); 5 after load/IN: the aligned data is only forwarded from W
+            // REV50: the same spacing applies between instructions: 4 clocks (X3/M forwarding); 5 after load/IN/MUL-DIV: the aligned data is only forwarded from W
+            if (issue) seqc <= (u[10] && (u[8] || u[50] || u[98])) ? 3'd4 : 3'd3;
+            if (issue && !u_last) begin seq <= 1'b1; nxt_r <= u[62:52]; end
             else if (issue) seq <= 1'b0;
         end
     end
+    // ser_q: set by an instruction whose effect is read at decode/issue time by the next ones (CR writes, I/O incl. the mode port, EI/DI/RETN/IM,
+    // privileged): the next instruction waits for an empty pipeline (as before REV50, when every instruction waited for the previous one)
     always @(posedge clk) begin
-        if (rst || flush) begin ds <= 0; dv <= 0; wq_v <= 0; irq_ent <= 1'b0; xy <= 2'd0; end
-        else if (irq_take && irq_new) begin
-            // interrupt entry: pseudo-instruction (opcode FF for the governor) that pushes the PC and jumps (IM0/1: 0038h; IM2: [I:FF])
-            irq_ent <= 1'b1; dv <= 1'b1; ds <= 0; wq_v <= 0; dpc <= npc; is_ed <= 1'b0; is_cb <= 1'b0; bank <= 2'd0; xy <= 2'd0;
-            dwin <= (im == 2'd2) ? {72'd0, ireg, 8'hFF, 8'hFF} : {80'd0, 16'h0038, 8'hFF};   // IM2: bytes 1..2 = [I:FF]
-        end else if (!dv) begin
-            if (!wq_v) begin
-                // REV48: capture as soon as the opcode bytes are in (4: prefix + ED/CB + 2 bytes); the window keeps being refreshed while the
-                // instruction is decoded and the issue waits until all clen bytes have arrived (bytes_ok). Before: 13 bytes (2 fetches after a branch).
-                if (qcnt >= 6'd4 && !hold) begin win_q <= win; wq_v <= 1; end
-            end else begin
-                dwin <= dwin_n;   // removes the bank prefix (ED <pfx> op ... -> ED op ...) or the DD/FD
-                xy <= !pfx_xy ? 2'd0 : (win_q[7:0] == 8'hDD) ? 2'd1 : 2'd2;
-                bank <= pfx_w ? ((win_q[15:8] == 8'h0B) ? 2'd1 : (win_q[15:8] == 8'h0E) ? 2'd2 : 2'd3) : 2'd0;
-                is_ed <= (win_q[7:0] == 8'hED);
-                is_cb <= pfx_xy ? (win_q[15:8] == 8'hCB) : (win_q[7:0] == 8'hCB);
-                wq_v <= 0; dv <= 1; ds <= 0; dpc <= dpc_q;
-            end
-        end else if (ds != ds_last) begin if (!hold) ds <= ds + 3'd1; if (!irq_ent) begin win_q <= win; dwin <= dwin_n; end end   // same: decode phases only advance with the pipeline moving
-        else if (consume) begin dv <= 0; ds <= 0; irq_ent <= 1'b0; end
-        else if (!irq_ent) begin win_q <= win; dwin <= dwin_n; end   // REV48: window refresh (the bytes past the opcode may still be arriving)
+        if (rst || flush) ser_q <= 1'b0;
+        else if (issue) ser_q <= (u[10] && iD_q[5]) || u[77] || (u[76:74] != 3'd0) || u[50] || u[51] || u[102] || u[104] || u[105];
+        else if (pipe_empty_q && !issue_q) ser_q <= 1'b0;
+    end
+    // ---- stage A
+    always @(posedge clk) begin
+        if (rst || flush) begin
+            av <= 1'b0; wq_v <= 1'b0; look <= 1'b0; acq <= 1'b0; irq_enta <= 1'b0; xya <= 2'd0; banka <= 2'd0; is_eda <= 1'b0; is_cba <= 1'b0;
+            alo <= rst ? 5'd0 : {2'b00, flush_tgt[2:0]}; npca <= rst ? 64'd0 : flush_tgt;
+        end else if (irq_take && irq_new) begin
+            // interrupt entry: pseudo-instruction (opcode FF for the governor) that pushes the PC and jumps (IM0/1: 0038h; IM2: [I:FF]).
+            // The candidate in B (not issued) is discarded; A restarts at the queue head (B's instruction, PC = npc).
+            irq_enta <= 1'b1; av <= 1'b1; as <= 3'd0; wq_v <= 1'b0; look <= 1'b0; acq <= 1'b1; pca <= npc; npca <= npc; is_eda <= 1'b0; is_cba <= 1'b0; banka <= 2'd0; xya <= 2'd0;
+            apos <= qoff; alo <= qoff;
+            dwa <= (im == 2'd2) ? {72'd0, ireg, 8'hFF, 8'hFF} : {80'd0, 16'h0038, 8'hFF};   // IM2: bytes 1..2 = [I:FF]
+        end else begin
+            if (av && as != 3'd7) as <= as + 3'd1;
+            // capture: the opcode bytes are in (4: prefix + ED/CB + 2 bytes); with A busy, only after A's length is known (look)
+            if (!wq_v && (!av || look) && avl >= 8'sd4) begin win_q <= win; wq_v <= 1'b1; cpos <= alo; cpc <= npca; end
+            else if (av && !look && !irq_enta) win_q <= win;     // window refresh while A's trailing bytes are still arriving
+            if (av && !look && !irq_enta) dwa <= dwin_n;
+            if (look_set) begin alo <= apos + {1'b0, clen_rawa}; npca <= (pca + {60'd0, clen_rawa}) & AMASK; look <= 1'b1; end
+            acq <= av && (acq || a_cmpl_now);
+            if (wq_v && (!av || xfer)) begin
+                dwa <= dwin_n;   // removes the bank prefix (ED <pfx> op ... -> ED op ...) or the DD/FD
+                xya <= !pfx_xy ? 2'd0 : (win_q[7:0] == 8'hDD) ? 2'd1 : 2'd2;
+                banka <= pfx_w ? ((win_q[15:8] == 8'h0B) ? 2'd1 : (win_q[15:8] == 8'h0E) ? 2'd2 : 2'd3) : 2'd0;
+                is_eda <= (win_q[7:0] == 8'hED);
+                is_cba <= pfx_xy ? (win_q[15:8] == 8'hCB) : (win_q[7:0] == 8'hCB);
+                irq_enta <= 1'b0; wq_v <= 1'b0; av <= 1'b1; as <= 3'd0; look <= 1'b0; acq <= 1'b0; apos <= cpos; pca <= cpc;
+            end else if (xfer) begin av <= 1'b0; look <= 1'b0; acq <= 1'b0; irq_enta <= 1'b0; end
+        end
+    end
+    // ---- stage B
+    always @(posedge clk) begin
+        if (rst || flush || (irq_take && irq_new)) begin dv <= 1'b0; irq_ent <= 1'b0; xy <= 2'd0; end
+        else if (xfer) begin
+            dv <= 1'b1; bs <= 3'd0; dwin <= dwa; uB <= uop_q; dpc <= pca; clen_r <= clen_ra;
+            is_ed <= is_eda; is_cb <= is_cba; xy <= xya; bank <= banka; irq_ent <= irq_enta;
+            edb_ill <= ed_ill; edb_bk <= ed_bk; edb_l12 <= (ed_len > 4'd12); edb_md <= (ed_id == 10'd13) || (ed_id == 10'd17) || (ed_id == 10'd24) || (ed_id == 10'd30);
+        end else begin
+            if (dv && bs != 3'd7) bs <= bs + 3'd1;
+            if (consume) begin dv <= 1'b0; irq_ent <= 1'b0; end
+        end
     end
     // PC counter (address of the next instruction)
     always @(posedge clk) begin
@@ -215,7 +289,6 @@ module r8064_core_min #(
 
     // ============ issue: fields, registers, immediate ============
     reg sw_main, sw_af;
-    wire [106:0] u = uop_q;
     wire f_pos = u[20];
     wire [7:0] fb = is_ed ? b3 : b1;          // ED page: register fields come from the modifier byte (b3)
     wire [2:0] rrD = f_pos ? fb[5:3] : fb[2:0];
@@ -226,16 +299,16 @@ module r8064_core_min #(
     regmap_b u_ma(.rr(rrA), .swap_main(sw_main), .swap_af(sw_af), .bank(bank), .idx(mA), .valid(vA));
     regmap_b u_mb(.rr(rrB), .swap_main(sw_main), .swap_af(sw_af), .bank(bank), .idx(mB), .valid(vB));
     // illegal banked instruction: illegal id, no bankable operand, 8-bit operand in bank N, IX/IY in bank, or prefix + 13 bytes
-    wire bank_ill = bank_on && (ed_ill || !ed_bk || (bank[1] && uop_q[6:5] == 2'd0) || ed_len > 4'd12 ||
-                                (uop_q[17] && !vD) || (uop_q[18] && !vA) || (uop_q[19] && !vB));
+    wire bank_ill = bank_on && (edb_ill || !edb_bk || (bank[1] && u[6:5] == 2'd0) || edb_l12 ||
+                                (u[17] && !vD) || (u[18] && !vA) || (u[19] && !vB));
     // REV47: R8064_NO_MD64 (Tang Nano 20K builds): DIVSQ (13), DIVUQ (17), MLTSQ (24), MLTUQ (30) are not implemented -> treated as illegal
     // (unimplemented-instruction exception, cause 7, if CR14.TE = 1; otherwise skipped like a NOP of the instruction's own length)
 `ifdef R8064_NO_MD64
-    wire md64_ill = (ed_id == 10'd13) || (ed_id == 10'd17) || (ed_id == 10'd24) || (ed_id == 10'd30);
+    wire md64_ill = edb_md;
 `else
     wire md64_ill = 1'b0;
 `endif
-    wire en_ill = is_ed && (ed_ill || bank_ill || md64_ill);   // illegal (exception: in this skeleton it becomes a NOP without write)
+    wire en_ill = is_ed && (edb_ill || bank_ill || md64_ill);   // illegal (exception: in this skeleton it becomes a NOP without write)
     wire [5:0] crn = u[101] ? {1'b1, b3[7:3]} : {1'b1, b3[4:0]};   // u[101]: LDCR/STCR (CR in b3[7:3], register in b3[2:0])
     //         // MTCR/MFCR: CR n = register-file index 32+n (ED 0A n = MFCR, ED 0C n = MTCR)
     // EXPLICIT uop indices (0 AX, 1 BC, 2 DE, 3 HL) also obey EXX / EX AF,AF' (before only the rr fields obeyed: LDIR after EXX used the wrong group)
@@ -266,7 +339,6 @@ module r8064_core_min #(
         if (r8h)   begin u_iss[48] = 1'b1; u_iss[72] = 1'b1; end
         if (r8bh)  u_iss[80] = 1'b1;
     end
-    reg [5:0] iA_q, iB_q, iD_q;
     always @(posedge clk) begin iA_q <= iA; iB_q <= iB; iD_q <= iD; end
     // REV47: a single shift amount (2 bytes with DD/FD + u[93]) and one shifter (before: two 104-bit shifters and a mux)
     wire [2:0] isa = (xy_on && u[93]) ? 3'd2 : u[41:39];
@@ -299,13 +371,13 @@ module r8064_core_min #(
     always @(posedge clk) begin
         if (rst || flush_x) v_xr <= 0;
         else if (!hold) begin
-            if (issue) pc_last <= dpc;
             v_xr <= issue && !en_ill; u_xr <= u_iss; imm_xr <= u[63] ? 64'd0 : immv; pcn_xr <= (dpc + {60'd0, clen}) & AMASK; pc_xr <= dpc; a_xr <= iA_q; b_xr <= iB_q; d_xr <= iD_q; ob3_xr <= (u[43:42] == 2'd0) ? {2'b00, ish[5:3]} : (u[43:42] == 2'd1) ? {1'b0, ish[6:3]} : ish[7:3]; xyd_xr <= xy_on && u[92]; dsp_xr <= dwin[15:8];
         end
     end
     // X2 / M / W produce the values to forward
     reg [63:0] st_x1, old_x1;   // write data / old destination value accompany the instruction in X1 (before they were overwritten every clock)
     reg         v_x1; reg [106:0] u_x1; reg [63:0] opa_x1, opb_x1, imm_x1, pcn_x1, pc_x1; reg [5:0] d_x1;
+    reg [63:0]  pc_x2, pc_x3, pc_m;   // REV50: PC of the instruction in each stage (EPC of a fault in M)
         reg         v_x2; reg [106:0] u_x2; reg [63:0] xa_x2, yb_x2, yy_x2, addr_x2, tgt_x2, st_x2, old_x2; reg ci_x2; reg [21:0] ctl_x2; reg [5:0] d_x2;
     reg         v_m;  reg [106:0] u_m;  reg [63:0] res_m, addr_m, st_m, old_m; reg [5:0] d_m; reg dn_m;
     reg         v_w;  reg [106:0] u_w;  reg [63:0] res_w; reg [5:0] d_w;
@@ -365,7 +437,7 @@ module r8064_core_min #(
         if (rst || flush) v_x2 <= 0;
         else if (!hold) begin
             v_x2 <= v_x1; u_x2 <= u_x1; xa_x2 <= xa; yb_x2 <= yb; yy_x2 <= yy; ci_x2 <= ci; ctl_x2 <= ctl; d_x2 <= d_x1;
-            st_x2 <= st_x1; old_x2 <= old_x1;
+            st_x2 <= st_x1; old_x2 <= old_x1; pc_x2 <= pc_x1;
             addr_x2 <= (opa_x1 + imm_x1) & AMASK;
             tgt_x2 <= (u_x1[70] ? pc_x1 : u_x1[66] ? (opa_x1 + imm_x1) : u_x1[15] ? (pcn_x1 + imm_x1) : opa_x1) & AMASK;
         end
@@ -412,7 +484,6 @@ module r8064_core_min #(
     wire cond_ok = u_x2[81] ? cond_x : u_x2[71] ? (f[2] && !f[6]) : cond_ok0;     // u[71]: PV and not-Z (CPIR/CPDR)
     assign flush_br = v_x2 && !flush_q && u_x2[11] && cond_ok && !hold;
     // empty pipeline and 'issue' of the previous cycle registered (takes the conjunction of the v_* off the interrupt path); the issue_q term covers the cycle in which the registered empty is still late
-    reg pipe_empty_q, issue_q;
     always @(posedge clk) begin pipe_empty_q <= !v_xr && !v_x1 && !v_x2 && !v_x3 && !v_m && !v_w; issue_q <= issue; end
     // EI only takes effect after the following instruction: ei_cnt = 1 after the EI leaves the decoder; any other completed instruction clears it
     reg ei_cnt;
@@ -421,8 +492,9 @@ module r8064_core_min #(
         else if (consume) ei_cnt <= (u[76:74] == 3'd1) && !irq_ent;
     end
     // irq_arm_q: slow part of the condition (pending INT, IE, EI delay) registered; the 1-clock delay is covered by flush_q / dv (INT and exception entry) and by the pipeline being empty
-    reg irq_arm_q; always @(posedge clk) irq_arm_q <= rst ? 1'b0 : (irq_pend && ie && !ei_cnt);
-    assign irq_take = irq_arm_q && !flush_q && pipe_empty_q && !issue_q && !dv && !seq && !c_user;   // hold implies v_m (pipe_empty_q = 0)
+    always @(posedge clk) irq_arm_q <= rst ? 1'b0 : (irq_pend && ie && !ei_cnt);
+    // REV50: B may hold a candidate (discarded; the issue stops while irq_arm_q). irq_enta / irq_ent: the entry already started (irq_arm_q is 1 clock late)
+    assign irq_take = irq_arm_q && !flush_q && pipe_empty_q && !issue_q && !seq && !c_user && !irq_enta && !irq_ent;   // hold implies v_m (pipe_empty_q = 0)
     assign flush_tgt_raw = (flush_br && !ex_take) ? tgt_x2 : vec;
     // PC of the next instruction (architectural) and PC saved on interrupt. In a repeated block (LDIR...) the branch to its own PC
     // leaves npc = PC of the instruction, so the interrupt between iterations resumes exactly the repeat (BC/HL/DE already updated).
@@ -449,7 +521,7 @@ module r8064_core_min #(
     always @(posedge clk) begin
         if (rst) v_x3 <= 0;
         else if (!hold) begin
-            v_x3 <= v_x2 && !flush_q && !ex_take; u_x3 <= u_x2; d_x3 <= d_x2; addr_x3 <= addr_x2; st_x3 <= st_x2; old_x3 <= old_x2;
+            v_x3 <= v_x2 && !flush_q && !ex_take; u_x3 <= u_x2; d_x3 <= d_x2; pc_x3 <= pc_x2; addr_x3 <= addr_x2; st_x3 <= st_x2; old_x3 <= old_x2;
         end
     end
 
@@ -465,8 +537,9 @@ module r8064_core_min #(
               (v_x1 && ((pw(u_x1) && (d_x1 == ra_ || d_x1 == rb_ || d_x1 == rd_)) || (new_part && wr_(u_x1) && d_x1 == rd_))) ||
               (v_x2 && ((pw(u_x2) && (d_x2 == ra_ || d_x2 == rb_ || d_x2 == rd_)) || (new_part && wr_(u_x2) && d_x2 == rd_))) ||
               (v_x3 && ((pw(u_x3) && (d_x3 == ra_ || d_x3 == rb_ || d_x3 == rd_)) || (new_part && wr_(u_x3) && d_x3 == rd_))) ||
-              (v_m  && ((pw(u_m)  && (d_m  == ra_ || d_m  == rb_ || d_m  == rd_)) || (new_part && wr_(u_m)  && d_m  == rd_))) ||
-              (v_w  && ((pw(u_w)  && (d_w  == ra_ || d_w  == rb_ || d_w  == rd_)) || (new_part && wr_(u_w)  && d_w  == rd_)));
+              (v_m  && ((pw(u_m)  && (d_m  == ra_ || d_m  == rb_ || d_m  == rd_)) || (new_part && wr_(u_m)  && d_m  == rd_)));
+    // REV50: no W term - a consumer issued while the producer is in W reads the register file, whose read-first bypass returns the MERGED value
+    // being written (regfile64/regfile64_d: wq_d = w_data); with hz registered, the issue happens 1 clock after the producer reached W.
     always @(posedge clk) hz_q <= rst ? 1'b0 : (hz && !issue);
 
     // ============ M: data access ============
@@ -592,7 +665,7 @@ module r8064_core_min #(
         else if (!hold) begin
             md_q <= v_x3 && u_x3[98] && !u_x3[4] && !u_x3[3];
             v_m <= v_x3; mm_q <= v_x3 && (u_x3[8] || u_x3[9]); u_m <= u_x3; d_m <= d_x3; dn_m <= 1'b0;
-            res_m <= (u_x3[8] || u_x3[9]) ? addr_x3 : x3_res; addr_m <= addr_x3; st_m <= st_x3; old_m <= old_x3; xing <= xing_x3; addr8_m <= ({addr_x3[63:3], 3'b000} + 64'd8) & AMASK;
+            res_m <= (u_x3[8] || u_x3[9]) ? addr_x3 : x3_res; addr_m <= addr_x3; pc_m <= pc_x3; st_m <= st_x3; old_m <= old_x3; xing <= xing_x3; addr8_m <= ({addr_x3[63:3], 3'b000} + 64'd8) & AMASK;
         end
     end
 
@@ -608,10 +681,10 @@ module r8064_core_min #(
     always @(posedge clk) begin
         if (rst) v_w <= 0;
         else if (ex_act) begin   // injection of the exception CRs (43 cause, 44 address, 45 EPC) by stage W; the pipeline is empty
-            v_w <= 1'b1; u_w <= 107'h400; d_w <= (exk == 2'd0) ? 6'd44 : (exk == 2'd1) ? 6'd43 : (exk == 2'd2) ? 6'd45 : 6'd50;   // k0: address (addr_m still holds in this clock), k1: cause, k2: EPC (pc_last/dpc stay stable)
+            v_w <= 1'b1; u_w <= 107'h400; d_w <= (exk == 2'd0) ? 6'd44 : (exk == 2'd1) ? 6'd43 : (exk == 2'd2) ? 6'd45 : 6'd50;   // k0: address (addr_m still holds in this clock), k1: cause, k2: EPC (ex_pcd/dpc stay stable)
             res_w <= (exk == 2'd3) ? {62'd0, ex_pu, 1'b0} :
                      ex_ovr ? ((exk == 2'd0) ? ex_aux : (exk == 2'd1) ? {59'd0, ex_cau} : ex_epcv) :
-                     (exk == 2'd0) ? (ex_isd ? addr_m : ifa) : (exk == 2'd1) ? {59'd0, ex_we, ex_isd, ex_cs} : (ex_isd ? pc_last : dpc); wsz_w <= 3'd4; oldz_w <= 64'd0;
+                     (exk == 2'd0) ? (ex_isd ? addr_m : ifa) : (exk == 2'd1) ? {59'd0, ex_we, ex_isd, ex_cs} : (ex_isd ? ex_pcd : dpc); wsz_w <= 3'd4; oldz_w <= 64'd0;
         end else begin
             v_w <= v_m && !hold && !ex_take_d; u_w <= u_m; d_w <= d_m; res_w <= ldval; wsz_w <= wsz_m; oldz_w <= u_m[67] ? 64'd0 : old_m;
         end
@@ -619,29 +692,32 @@ module r8064_core_min #(
 
     // ============ translation exceptions ============
     // D: the access in M finished with d_flt (ack with data 0, write discarded by the memory): kills M/W/X3, flushes the front-end, jumps to 'vec'. EPC = PC of the instruction
-    //    (pc_last); the restart executes the whole instruction again. RESTARTABLE (rev22): the uop that accesses memory is the FIRST with a visible effect: PUSH/CALL/INT entry write to [SP-2]
+    //    (pc_m, REV50); the restart executes the whole instruction again. RESTARTABLE (rev22): the uop that accesses memory is the FIRST with a visible effect: PUSH/CALL/INT entry write to [SP-2]
     //    (constant immediate immc) and only then update SP; POP/RET/LDIR/CPIR/OUTI (and IM2) read before altering registers (TMP is not visible). NOT restartable: INI/INIR/IND/INDR (the port read already happened).
     //    Fault during INT entry: IFF2 := 1 and the INT is requested again (RETN restores IFF1 and the INT is accepted again).
     // I: the fetched word faulted; the exception is taken at the instruction boundary (empty pipeline) when the candidate instruction is <= 12 bytes from the word (EPC = dpc).
     assign ex_take_d = (m_mem && d_ack && d_flt) || ex_take_m;
     wire ex_take_i = dv && !seq && ifx_q && !ex_act && pipe_empty_q && !issue_q && !m_mem && !ex_take_d;
-    // TRAPS taken at the instruction boundary, instead of executing the candidate (uop_q is already stable several clocks before ds_last):
+    // TRAPS taken at the instruction boundary, instead of executing the candidate (the candidate in B is stable >= 2 clocks before the issue):
     //   u[102] privileged instruction in user mode (cause 7, aux 2) | illegal ED, if CR14 bit 2 = 1 (cause 7, aux 0) | u[104] SCALL (cause 5, aux = n)
     wire t_priv = u[102] && c_user, t_unimp = en_ill && c_te, t_scall = u[104];
     always @(posedge clk) trap_q <= !rst && !flush && dv && !seq && !irq_ent && (t_priv || t_unimp || t_scall);
-    wire ex_take_t = trap_q && dv && !seq && (ds == ds_last) && gov_go && !ex_act && pipe_empty_q && !issue_q && !m_mem && !md_q && !ex_take_d && !ex_take_i;
+    wire ex_take_t = trap_q && b_ready && !seq && gov_go && !ex_act && pipe_empty_q && !issue_q && !m_mem && !md_q && !ex_take_d && !ex_take_i;
     // interrupt accepted in USER MODE: enters as an exception (cause 0, EPC = next instruction), so the handler runs in supervisor mode and returns with SYSRT
-    wire irq_trap = irq_arm_q && !ex_act && !flush_q && pipe_empty_q && !issue_q && !dv && !seq && c_user && !ex_take_d;
+    wire irq_trap = irq_arm_q && !ex_act && !flush_q && pipe_empty_q && !issue_q && !seq && c_user && !ex_take_d;
     assign ex_take = ex_take_d | ex_take_i | ex_take_t | irq_trap;
     // values written to the CRs by the entry: k0 CR12 (address/auxiliary), k1 CR11 (cause), k2 CR13 (EPC), k3 CR18 (mode: {previous user, 0})
     always @(posedge clk) begin
         ifd_q <= ifa[7:0] - dpc[7:0];   // the queue has <= 40 bytes: the distance fits in 8 bits (negative = candidate already inside the word)
         ifx_q <= ifp && (ifd_q <= 8'd12 || ifd_q >= 8'd224);
+        ifda_q <= ifa[7:0] - pca[7:0];  // the same for A's instruction: B takes it even if incomplete, to raise the exception at the boundary
+        ifxa_q <= ifp && av && (ifda_q <= 8'd12 || ifda_q >= 8'd224);
         if (rst) begin ex_act <= 1'b0; exk <= 2'd0; end
         else if (ex_take) begin
             ex_act <= 1'b1; exk <= 2'd0; ex_isd <= ex_take_d; ex_we <= u_m[9]; ex_cs <= ex_take_d ? d_cs : ifc; ex_pu <= c_user;
             ex_ovr <= ex_take_m || (!ex_take_d && !ex_take_i);
-            if (ex_take_m)                   begin ex_cau <= 5'd6; ex_aux <= 64'd0; ex_epcv <= pc_last; end
+            ex_pcd <= pc_m;
+            if (ex_take_m)                   begin ex_cau <= 5'd6; ex_aux <= 64'd0; ex_epcv <= pc_m; end
             else if (!ex_take_d && !ex_take_i && ex_take_t) begin
                 ex_cau  <= t_scall && !t_priv && !t_unimp ? 5'd5 : 5'd7;
                 ex_aux  <= t_priv ? 64'd2 : t_unimp ? 64'd0 : {56'd0, b3};
