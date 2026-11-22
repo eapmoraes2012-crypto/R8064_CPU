@@ -31,10 +31,12 @@ module r8064_decode #(
     localparam NPAGES = 33;
     localparam PW     = 6;
 
-    reg [9:0]  rom_b [0:NPAGES*256-1];
+    // REV53c: the BSRAM ROM_B holds pages 0..31 (exactly 8192 x 10 = 5 blocks); page 32 is logic (r8064_rom_b32). With 33 pages in the
+    // array the last 256 entries took a 6th block, and the full REV53 build (with the FPU) ran out of BSRAM.
+    reg [9:0]  rom_b [0:8191];
     reg [31:0] ctrl  [0:511];
     initial begin
-        $readmemh(ROM_B_FILE, rom_b);
+        $readmemh(ROM_B_FILE, rom_b, 0, 8191);     // the file still has the 33 pages (page 32 is read by gen_decode_rom.py)
         $readmemh(CTRL_FILE,  ctrl);
     end
 
@@ -43,12 +45,15 @@ module r8064_decode #(
     wire [11:0]   rom_a_w; r8064_rom_a u_roma(.a(b2), .d(rom_a_w));
     wire [PW-1:0] page  = amb_w[PW-1:0];
 
+    wire [9:0]    b32_w; r8064_rom_b32 u_rb32(.a(b3), .d(b32_w));
     reg [11:0] a_q;
-    reg [9:0]  b_q;
+    reg [9:0]  b0_q, b32_q; reg p32_q;
     always @(posedge clk) begin
         a_q <= rom_a_w;
-        b_q <= rom_b[{page, b3}];
+        b0_q <= rom_b[{page[4:0], b3}];
+        b32_q <= b32_w; p32_q <= page[5];
     end
+    wire [9:0] b_q = p32_q ? b32_q : b0_q;
 
     // registered id (+2 clocks, aligned with the control ROM fields): takes the BSRAM ROM_B output + mux off the uop ROM address
     reg [9:0] id_q;

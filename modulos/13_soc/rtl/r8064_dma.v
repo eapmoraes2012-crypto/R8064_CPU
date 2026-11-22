@@ -39,6 +39,36 @@ module r8064_dma #(parameter PORT_STAT = 8'hEE, parameter PORT_IE = 8'hEF, param
     // boot: loads channel 0 (buffer offset 0 -> SDRAM 0, boot_cnt words, MODE 0) without going through the core
     input  wire        boot_go, input wire [18:0] boot_cnt, output wire boot_done, input wire boot_clr
 );
+`ifdef R8064_NO_DMA
+    // REV53c: build WITHOUT the DMA (saves ~1,100 LUTs for the FPU build): only the boot copy remains (window buffer word i -> SDRAM word i,
+    // i = 0..boot_cnt-1, one word at a time), then the 'inv' pulse as at the end of a channel-0 transfer. MTCR CR19..CR30 and the ports are ignored
+    // (they read 00h), no IRQ, no FIFO modes.
+    localparam [2:0] B_IDLE = 0, B_RD = 1, B_LAT = 2, B_WR = 3, B_WT = 4;
+    reg [2:0] bs; reg [18:0] bn; reg [10:0] ba; reg [19:0] bd; reg [63:0] bq; reg bdone;
+    assign io_rd = 8'h00; assign io_sel = 1'b0; assign irq = 1'b0; assign d_pop = 1'b0; assign d_push = 1'b0; assign d_wd = 8'h00;
+    assign b_re = (bs == B_RD) && b_ok; assign b_we = 1'b0; assign b_a = ba; assign b_wd = 64'd0;
+    assign m_req = (bs == B_WR); assign m_we = 1'b1; assign m_addr = bd; assign m_wd = bq; assign m_be = 8'hFF;
+    assign boot_done = bdone;
+    always @(posedge clk) begin
+        inv <= 1'b0;
+        if (rst) begin bs <= B_IDLE; bdone <= 1'b0; end
+        else begin
+            if (boot_clr) bdone <= 1'b0;
+            case (bs)
+                B_IDLE: if (boot_go) begin bn <= boot_cnt; ba <= 11'd0; bd <= 20'd0; bdone <= 1'b0;
+                                           if (boot_cnt == 19'd0) begin bdone <= 1'b1; inv <= 1'b1; end else bs <= B_RD; end
+                B_RD:   if (b_ok) bs <= B_LAT;
+                B_LAT:  begin bq <= b_q; bs <= B_WR; end                     // b_q: 1 clock after b_re
+                B_WR:   if (m_acc) bs <= B_WT;
+                B_WT:   if (m_done) begin
+                            bn <= bn - 19'd1; ba <= ba + 11'd1; bd <= bd + 20'd1;
+                            if (bn == 19'd1) begin bdone <= 1'b1; inv <= 1'b1; bs <= B_IDLE; end else bs <= B_RD;
+                        end
+                default: bs <= B_IDLE;
+            endcase
+        end
+    end
+`else
 `ifdef R8064_DMA2
     localparam NCH = 2;   // REV47: per-channel state only for the 2 existing channels (the index never reaches 2/3: writes to CR25..CR30 are ignored)
 `else
@@ -183,4 +213,5 @@ module r8064_dma #(parameter PORT_STAT = 8'hEE, parameter PORT_IE = 8'hEF, param
             endcase
         end
     end
+`endif   // R8064_NO_DMA
 endmodule

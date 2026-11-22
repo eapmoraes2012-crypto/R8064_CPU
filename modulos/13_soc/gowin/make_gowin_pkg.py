@@ -14,12 +14,13 @@ import os, re, shutil, sys
 # hex files and does not load them as iverilog does (the core then runs a wrong microcode). For Gowin they go as $readmemb files
 # with exactly the memory width.
 BIN_ROMS = [('uop.mem', 'uop_bin.mem', 107, '$readmemh(UOP_FILE, uopm)', '$readmemb(UOP_FILE, uopm)'),
-            ('rom_ed_b.mem', 'rom_ed_b_bin.mem', 10, '$readmemh(ROM_B_FILE, rom_b)', '$readmemb(ROM_B_FILE, rom_b)')]
+            ('rom_ed_b.mem', 'rom_ed_b_bin.mem', 10, '$readmemh(ROM_B_FILE, rom_b, 0, 8191)', '$readmemb(ROM_B_FILE, rom_b)')]
+BIN_LINES = {'rom_ed_b.mem': 8192}   # REV53c: Gowin gets only the 32 BSRAM pages (page 32 is logic, r8064_rom_b32)
 def bin_roms(text, src_dir, out_dir, P):
     for hexf, binf, w, old, new in BIN_ROMS:
         assert old in text, old
         text = text.replace(old, new).replace('"%s%s"' % (P, hexf), '"%s%s"' % (P, binf))
-        lines = [l.strip() for l in open(os.path.join(src_dir, hexf)) if l.strip() and not l.startswith('//')]
+        lines = [l.strip() for l in open(os.path.join(src_dir, hexf)) if l.strip() and not l.startswith('//')][:BIN_LINES.get(hexf)]
         with open(os.path.join(out_dir, binf), 'w', newline='\r\n') as f:
             for l in lines:
                 v = int(l, 16); assert v < (1 << w), (hexf, l)
