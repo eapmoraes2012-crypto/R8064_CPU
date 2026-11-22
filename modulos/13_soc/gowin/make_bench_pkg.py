@@ -5,7 +5,9 @@
 #   <out>/src/*.mem             : ROM images (uop, decoder, governor), copied from ../pnr
 #   <out>/src/monitor_l0..7.hex : the bench firmware (../bench/gen_bench.py), loaded into the boot buffer in place of the monitor
 #   <out>/src/tangnano20k_bench.cst, r8064_bench.sdc, <out>/gowin_build.tcl, <out>/rodar_gowin.bat, <out>/LEIA-ME_bench.txt
-# Usage: python3 make_bench_pkg.py <out_dir> [<absolute path of out_dir/src as Gowin will see it, e.g. C:/Users/me/Documents/R8064_bench/src/>]
+# Usage: python3 make_bench_pkg.py [--bm] <out_dir> [<absolute path of out_dir/src as Gowin will see it, e.g. C:/Users/me/Documents/R8064_bench/src/>]
+#   --bm: the boot image is the board benchmarks (../bench/bm/board/build_board.py: Dhrystone, Sieve, soft float; needs SDCC, see there)
+#         instead of the timing-bench firmware. REV52: 43.2 MHz (27 MHz x 8/5), reference timings ../bench/ref_rev52.json.
 import os, re, shutil, sys, subprocess
 
 # ROMs whose width is not a multiple of 4 bits: Gowin EDA reports "Entry size .. does not match memory width" (EX2526) for their
@@ -24,10 +26,16 @@ def bin_roms(text, src_dir, out_dir, P):
                 f.write(format(v, '0%db' % w) + '\n')
     return text
 HERE = os.path.dirname(os.path.abspath(__file__)); PNR = os.path.join(HERE, '..', 'pnr'); BENCH = os.path.join(HERE, '..', 'bench')
-out = os.path.abspath(sys.argv[1]); src = os.path.join(out, 'src'); os.makedirs(src, exist_ok=True)
-P = sys.argv[2] if len(sys.argv) > 2 else src.replace('\\', '/') + '/'
+BM = '--bm' in sys.argv; args = [a for a in sys.argv[1:] if a != '--bm']
+out = os.path.abspath(args[0]); src = os.path.join(out, 'src'); os.makedirs(src, exist_ok=True)
+P = args[1] if len(args) > 1 else src.replace('\\', '/') + '/'
 if not P.endswith('/'): P += '/'
-subprocess.run([sys.executable, os.path.join(BENCH, 'gen_bench.py'), os.path.join(BENCH, 'ref_rev48.json'), src], check=True)
+if BM:
+    subprocess.run([sys.executable, os.path.join(BENCH, 'bm', 'board', 'build_board.py'), os.path.join(out, 'bm_build')], check=True)
+    for g in range(8): shutil.copy(os.path.join(out, 'bm_build', 'monitor_l%d.hex' % g), src)
+    shutil.copy(os.path.join(out, 'bm_build', 'board.bin'), os.path.join(src, 'bench.bin'))
+else:
+    subprocess.run([sys.executable, os.path.join(BENCH, 'gen_bench.py'), os.path.join(BENCH, 'ref_rev52.json'), src], check=True)
 first = open(os.path.join(PNR, 'ys_cart.ys'), encoding='utf-8').read().split('\n')[0]
 defs = re.findall(r'-D(\w+)', first)
 files = [f for f in first.split() if f.endswith('.v') and not re.search(r'r8064_cart_top|r8064_slot_if|r8064_slot_dec', f)] + ['../rtl/r8064_bench_top.v']
@@ -47,7 +55,7 @@ for n in ('tangnano20k_bench.cst', 'r8064_bench.sdc'): shutil.copy(os.path.join(
 tcl = open(os.path.join(HERE, 'gowin_build.tcl'), encoding='utf-8').read()
 tcl = tcl.replace('r8064_cart.fs', 'r8064_bench.fs').replace('r8064_cart_all.v', 'r8064_bench_all.v').replace('tangnano20k_cart.cst', 'tangnano20k_bench.cst').replace('r8064_cart.sdc', 'r8064_bench.sdc')
 tcl = tcl.replace('r8064_cart_top', 'r8064_bench_top').replace('-name r8064_cart', '-name r8064_bench').replace('-output_base_name r8064_cart', '-output_base_name r8064_bench')
-tcl = tcl.replace('-global_freq 57.28', '-global_freq 57.375').replace('R8064 cartridge', 'R8064 timing bench')
+tcl = tcl.replace('-global_freq 57.28', '-global_freq 43.2').replace('R8064 cartridge', 'R8064 timing bench')
 open(os.path.join(out, 'gowin_build.tcl'), 'w', newline='\r\n').write(tcl)
 bat = open(os.path.join(HERE, 'rodar_gowin.bat'), encoding='utf-8').read().replace('R8064 cartridge', 'R8064 timing bench')
 open(os.path.join(out, 'rodar_gowin.bat'), 'w', newline='\r\n').write(bat)

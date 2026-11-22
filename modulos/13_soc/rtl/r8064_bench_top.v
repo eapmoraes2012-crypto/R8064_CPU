@@ -1,4 +1,4 @@
-// r8064_bench_top.v - TIMING BENCH for the bare Tang Nano 20K (no MSX): clkgen (27 MHz crystal -> 57.375 MHz) + SoC + embedded SDRAM
+// r8064_bench_top.v - TIMING BENCH for the bare Tang Nano 20K (no MSX): clkgen (27 MHz crystal -> 43.2 MHz, REV52; macro R8064_CLK57: 57.375 MHz) + SoC + embedded SDRAM
 // + r8064_bench_io (UART to the PC through the board's USB serial, pin 69, 115200 8N1; clock counter driven by the core PC).
 // The firmware (modulos/13_soc/bench, image monitor_l0..7.hex) runs every instruction case in a loop, exactly as tb_meas.v does in simulation:
 //   per run: the firmware builds the loop at BUILD, writes its address to the bench, arms it (GO) and jumps to it. The bench counts the clocks
@@ -6,6 +6,15 @@
 //   Each case takes 2 runs: the loop without the instruction (empty) and with it; clocks/instruction = (T_case - T_empty) * 100 / (32 * copies).
 //   After a reset the firmware reads the run number and the result from the bench, prints a line and builds the next run.
 // Only the SoC is reset between runs (the bench registers, the PLL and the UART keep running); the KEY1 button (pin 88) restarts everything.
+`ifdef R8064_CLK57
+`define R8064_B_SRC 0
+`define R8064_B_CPT 16
+`define R8064_B_BAUD 498
+`else
+`define R8064_B_SRC 4
+`define R8064_B_CPT 12
+`define R8064_B_BAUD 375
+`endif
 module r8064_bench_top #(parameter [3:0] SDR_PSDA = 4'd12)(   // 12 = 270 degrees: measured on the board (r8064_sdtest_top: phases 10..13 without errors, 4 = 100% errors)
     input  wire        clk27,        // board crystal (pin 4)
     input  wire        btn_rst,      // KEY1 (pin 88), pressed = 1
@@ -21,13 +30,13 @@ module r8064_bench_top #(parameter [3:0] SDR_PSDA = 4'd12)(   // 12 = 270 degree
     inout  wire [31:0] IO_sdram_dq
 );
     wire clk, clk_sd, locked, rst_pll;
-    r8064_clkgen #(.SRC(0), .SDR_PSDA(SDR_PSDA)) u_clk(.clk_in(clk27), .rst_in(1'b0), .clk(clk), .clk_sdram(clk_sd), .locked(locked), .rst(rst_pll));
+    r8064_clkgen #(.SRC(`R8064_B_SRC), .SDR_PSDA(SDR_PSDA)) u_clk(.clk_in(clk27), .rst_in(1'b0), .clk(clk), .clk_sdram(clk_sd), .locked(locked), .rst(rst_pll));
     // KEY1: a change of its level (press or release) restarts the bench, so it works whatever the active level of the button
     reg [2:0] bs = 3'b000; reg [4:0] bst = 5'd0;
     always @(posedge clk) begin bs <= {bs[1:0], btn_rst}; if (bs[2] != bs[1]) bst <= 5'd16; else if (bst != 5'd0) bst <= bst - 5'd1; end
     wire s_cke, s_cs_n, s_ras_n, s_cas_n, s_we_n, s_dq_oe; wire [3:0] s_dqm; wire [1:0] s_ba; wire [10:0] s_a; wire [31:0] s_dq_o;
     wire init_done;
-    r8064_bench #(.BAUD_DIV(498)) u_b(.clk(clk), .rst(rst_pll | (bst != 5'd0)), .uart_tx(uart_tx), .init_done(init_done),
+    r8064_bench #(.BAUD_DIV(`R8064_B_BAUD), .CPT(`R8064_B_CPT)) u_b(.clk(clk), .rst(rst_pll | (bst != 5'd0)), .uart_tx(uart_tx), .init_done(init_done),   // BAUD: 43.2 MHz / 115200 = 375
         .s_cke(s_cke), .s_cs_n(s_cs_n), .s_ras_n(s_ras_n), .s_cas_n(s_cas_n), .s_we_n(s_we_n), .s_dqm(s_dqm), .s_ba(s_ba), .s_a(s_a),
         .s_dq_o(s_dq_o), .s_dq_oe(s_dq_oe), .s_dq_i(IO_sdram_dq));
     assign O_sdram_clk = clk_sd;
@@ -43,7 +52,7 @@ module r8064_bench_top #(parameter [3:0] SDR_PSDA = 4'd12)(   // 12 = 270 degree
 endmodule
 
 // r8064_bench: SoC + bench I/O (no clock generator: the simulation instantiates this module directly).
-module r8064_bench #(parameter BAUD_DIV = 498, parameter INIT_CYC = 20000, parameter TMO_BIT = 22, parameter SIL_BIT = 27)(
+module r8064_bench #(parameter BAUD_DIV = 498, parameter INIT_CYC = 20000, parameter TMO_BIT = 22, parameter SIL_BIT = 27, parameter CPT = 16)(
     input  wire        clk, rst,
     output wire        uart_tx, output wire init_done,
     output wire        s_cke, s_cs_n, s_ras_n, s_cas_n, s_we_n, s_dq_oe,
@@ -56,7 +65,7 @@ module r8064_bench #(parameter BAUD_DIV = 498, parameter INIT_CYC = 20000, param
 
     wire io_oe, iox_we, iox_re, nat, cs, z8, ro, mb, dbg_s, gcv, fbi, fbd, mmu_en, mmu_user, i_fault, d_fault, fifo_irq, fifo_rst;
     wire [7:0] io_rd, iox_a, iox_wd, iox_rd, fm_rd, sb_rd, dbg_f; wire [63:0] dbg_pc; wire [2:0] ic, dc;
-    r8064_soc #(.BOOT_WORDS(2048), .INIT_IMG(1), .INIT_CYC(INIT_CYC)) u_soc(.clk(clk), .rst(soc_rst), .irq(1'b1),
+    r8064_soc #(.BOOT_WORDS(2048), .INIT_IMG(1), .INIT_CYC(INIT_CYC), .CPT(CPT), .REF_INT(25 * CPT)) u_soc(.clk(clk), .rst(soc_rst), .irq(1'b1),
         .io_we(1'b0), .io_re(1'b0), .io_a(8'd0), .io_wd(8'd0), .io_rd(io_rd), .io_oe(io_oe),
         .io_x_we(iox_we), .io_x_re(iox_re), .io_x_a(iox_a), .io_x_wd(iox_wd), .io_x_rd(iox_rd), .port_c(8'd0),
         .fm_we(1'b0), .fm_re(1'b0), .fm_a(2'd0), .fm_wd(8'd0), .fm_rd(fm_rd),
@@ -78,6 +87,7 @@ endmodule
 //   93h/94h IN: result of the last two runs = (T_last - T_previous) * 100 >> shift, saturated to 0..FFFFh (hundredths of a clock)
 //   95h  IN : b0 = one of the last two runs timed out, b1 = T_last < T_previous
 //   96h..99h IN/OUT: free scratch bytes kept across the SoC reset (the firmware keeps its OK / DIF counters there)
+//   F0h OUT: benchmark timer start, F1h OUT: stop; F4h..F7h IN: clocks between them (32 bits, low byte first) - REV52, board benchmarks
 //   other ports: IN = 5Ah (as tb_meas), OUT ignored (the IN/OUT instructions under test use port 00h)
 // Hardware messages (no CPU needed, to tell a board/UART problem from a CPU/SDRAM problem):
 //   after the reset (power-up, KEY1):            "R8064 bench: FPGA up"
@@ -168,6 +178,7 @@ module r8064_bench_io #(parameter BAUD_DIV = 498, parameter TMO_BIT = 22, parame
     reg [31:0] lp = 32'd0, ppc = 32'd0, cyc = 32'd0, t0 = 32'd0, tl = 32'd0, tp = 32'd0, tcnt = 32'd0;
     reg [5:0] nit = 6'd0; reg armed = 1'b0; reg [3:0] sh = 4'd9, shl = 4'd9; reg tmo_l = 1'b0, tmo_p = 1'b0; reg [15:0] run = 16'd0;
     reg [7:0] scr [0:3];
+    reg [31:0] bm0 = 32'd0, bmt = 32'd0;   // benchmark timer (F0h start, F1h stop)
     assign run_w = run;
     wire hit = armed && (pc == lp) && (ppc != lp);
     always @(posedge clk) begin
@@ -178,6 +189,8 @@ module r8064_bench_io #(parameter BAUD_DIV = 498, parameter TMO_BIT = 22, parame
             if (we && a == 8'h91) lp <= {wd, lp[31:8]};
             if (we && a == 8'h92) begin armed <= 1'b1; nit <= 6'd0; tcnt <= 32'd0; sh <= wd[3:0]; end
             if (we && a >= 8'h96 && a <= 8'h99) scr[a[1:0] - 2'd2] <= wd;
+            if (we && a == 8'hF0) bm0 <= cyc;
+            if (we && a == 8'hF1) bmt <= cyc - bm0;
             if (armed) begin
                 tcnt <= tcnt + 32'd1;
                 if (hit) begin nit <= nit + 6'd1; if (nit == 6'd4) t0 <= cyc; end
@@ -206,6 +219,7 @@ module r8064_bench_io #(parameter BAUD_DIV = 498, parameter TMO_BIT = 22, parame
             8'h94: rd = res[15:8];
             8'h95: rd = {6'd0, neg, tmo_l | tmo_p};
             8'h96, 8'h97, 8'h98, 8'h99: rd = scr[a[1:0] - 2'd2];
+            8'hF4: rd = bmt[7:0]; 8'hF5: rd = bmt[15:8]; 8'hF6: rd = bmt[23:16]; 8'hF7: rd = bmt[31:24];
             default: rd = 8'h5A;
         endcase
     end

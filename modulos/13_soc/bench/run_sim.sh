@@ -4,7 +4,7 @@
 set -e
 H=$(cd "$(dirname "$0")" && pwd); W=${1:-$H/simwork}; P=$H/../pnr; shift 2>/dev/null || true
 mkdir -p "$W"
-python3 "$H/gen_bench.py" "$H/ref_rev48.json" "$W" > "$W/gen.log"
+python3 "$H/gen_bench.py" "$H/ref_rev52.json" "$W" > "$W/gen.log"
 N=$(grep -c ' sim ' "$W/bench.map")
 cp "$P"/*.mem "$W"/
 FILES=$(head -1 "$P/ys_cart.ys" | tr ' ' '\n' | grep '\.v$' | grep -v 'r8064_cart_top\|r8064_slot_if\|r8064_slot_dec' | sed "s#^#$P/#")

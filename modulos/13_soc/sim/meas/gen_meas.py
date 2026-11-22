@@ -157,7 +157,8 @@ def compile_tb(root, tag):
     import shutil
     if not os.path.samefile(os.path.join(HERE, '..'), sim): shutil.copy(os.path.join(HERE, '..', 'tb_meas.v'), os.path.join(sim, 'tb_meas.v'))
     vvp = os.path.join(W, 'meas_%s.vvp' % tag)
-    r = subprocess.run(['iverilog', '-g2012', '-o', vvp, 'tb_meas.v'] + soc, cwd=sim, capture_output=True, text=True)
+    defs = os.environ.get('MEAS_DEFS', '').split()   # REV52: e.g. MEAS_DEFS='-DMEAS_CPT=12 -DMEAS_REF=300' (board bench clock)
+    r = subprocess.run(['iverilog', '-g2012'] + defs + ['-o', vvp, 'tb_meas.v'] + soc, cwd=sim, capture_output=True, text=True)
     if r.returncode: raise SystemExit(r.stdout + r.stderr)
     return sim, vvp
 

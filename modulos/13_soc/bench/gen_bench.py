@@ -3,10 +3,10 @@
 # The cases are the same as sim/meas/gen_meas.py (every instruction measured in simulation). Each case is stored as a small descriptor;
 # the firmware rebuilds the loop at BUILD (same address modulo 1 KB as in the simulation, so the caches see the same layout) and runs it.
 # Output (in <out dir>, default ./out): bench.bin (16 KB), monitor_l0..7.hex (the boot image lanes read by r8064_xbuf), bench.map (cases)
-# Usage: python3 gen_bench.py [<reference json from gen_meas, default ref_rev48.json>] [<out dir>]
+# Usage: python3 gen_bench.py [<reference json from gen_meas, default ref_rev52.json>] [<out dir>]
 import sys, os, json, tempfile
 HERE = os.path.dirname(os.path.abspath(__file__)); ROOT = os.path.abspath(os.path.join(HERE, '..', '..', '..'))
-REF = sys.argv[1] if len(sys.argv) > 1 else os.path.join(HERE, 'ref_rev48.json')
+REF = sys.argv[1] if len(sys.argv) > 1 else os.path.join(HERE, 'ref_rev52.json')
 OUT = sys.argv[2] if len(sys.argv) > 2 else os.path.join(HERE, 'out')
 os.makedirs(OUT, exist_ok=True)
 TMP = tempfile.mkdtemp(prefix='bench_')
