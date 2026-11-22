@@ -1,0 +1,13 @@
+R8064 board benchmarks (REV52, bench clock 43.2 MHz; Z80 mode = 3.6 MHz) - Tang Nano 20K, bitstream R8064_bm (bench RTL + bench/bm/board image)
+
+== R8064 native ==
+Dhrystone 2.1, 2000 runs: 24789439 clocks = 12394 clocks/run, 3485.5 Dhrystones/s, 1.983 DMIPS   results OK
+Sieve (8190 flags, 1 pass): 4090380 clocks = 94.68 ms                                              results OK
+Float (SDCC soft, 200 FLOP): 2383425 clocks = 3625 FLOPS                                           results OK
+
+== Z80 mode (MSX timing) ==
+Dhrystone 2.1, 200 runs: 32110860 clocks = 160554 clocks/run, 269.0 Dhrystones/s, 0.153 DMIPS     results OK
+Sieve (8190 flags, 1 pass): 73203960 clocks = 1694.53 ms                                          results OK
+Float (SDCC soft, 200 FLOP): 39524388 clocks = 218 FLOPS                                           results OK
+
+Done: 0 errors.
