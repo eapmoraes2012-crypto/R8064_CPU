@@ -1,7 +1,8 @@
 // fpu_seq.v - arithmetic core of the R8064 80-bit FPU (extended x87), made to take little area. Same interface and same results as fpu_alu.v
 // (bit by bit, fpref.py vectors). Datapath: working register X (68 bits) that only receives 8 things (MA, MB, the sum, X shifted by 4 or 1 to
 // each side, the quotient/root), ONE adder (X or MA) +/- (X, MA or the root trial), and two 66-bit registers (MA, MB). Multiplication, division and
-// square root are bit by bit in this adder (2 to 3 clocks per bit).
+// square root are bit by bit in this adder (2 to 3 clocks per bit), except multiplication (REV54): 16 multiplier bits per step with a 64 x 16
+// product (DSP blocks) and its own 84-bit adder, 2 clocks per step (8 clocks instead of 128); same result bit by bit (X = sticky shift of the sum).
 // Operations (op): 0 ADD, 1 SUB, 2 MUL, 3 DIV, 4 SQRT, 5 CMP, 6 FILD(int64), 7 FIST(int64), 8 RNDINT, 9 LD32, 10 LD64, 11 ST32, 12 ST64.
 // a = ST0 (or memory data), b = second operand; a, b, op, rc and pc must stay STABLE from 'start' until the next 'start'.
 // rc: 0 nearest/even, 1 -inf, 2 +inf, 3 zero. pc: 0 = 24, 2 = 53, others = 64 bits (ADD/SUB/MUL/DIV/SQRT only).
@@ -25,7 +26,7 @@ module fpu_seq(
                      S_SQC = 26, S_SQD = 27, S_SQE = 28, S_RI = 29, S_RI2 = 30, S_NEG = 31, S_RP0 = 32, S_RP1 = 33, S_RP2 = 34, S_RP3 = 35, S_FIN = 36;
     localparam [67:0] XIND = {1'b0, 64'hC000_0000_0000_0000, 3'd0}, XINF = {1'b0, 64'h8000_0000_0000_0000, 3'd0};
     reg [5:0] st, ret;
-    reg [67:0] X; reg [65:0] MA, MB; reg signed [17:0] EA, EB; reg [6:0] cn;
+    reg [67:0] X; reg [65:0] MA, MB; reg [79:0] PR; reg signed [17:0] EA, EB; reg [6:0] cn;
     reg sr, nb, subr, tiny, mlt, meq, odd, sk; reg [1:0] emode;      // emode: 0 exponent = EA (or 0 if denormal/zero), 1 all-ones exponent, 2 raw integer
     assign busy = (st != S_IDLE);
     // ---- classification (combinational over the stable inputs) ----
@@ -88,6 +89,9 @@ module fpu_seq(
     wire [68:0] SUM = {1'b0, L} + {1'b0, sub ? ~R : R} + {68'd0, sub};
     wire ge = SUM[68]; wire sz = (SUM[67:0] == 68'd0); wire [67:0] sumk = SUM[67:0] & smk;
     wire xz = (X == 68'd0);
+    // ---- REV54 multiplication step: X <- sticky shift by 16 of (X + (MA x MB[15:0]) << 3) ----
+    wire [63:0] ama = {MA[63], MA[62] | nq, MA[61:0]};              // the significand that xma puts in X[66:3]
+    wire [83:0] msum = {16'd0, X} + {1'b0, PR, 3'd0};
     // ---- result: assembled from the registers (X, EA, sr, emode) ----
     wire [17:0] eb80 = EA + 18'd16383, eb64 = EA + 18'd1023, eb32 = EA + 18'd127;
     wire [14:0] ef = (emode == 2'd1) ? 15'h7FFF : X[66] ? (st32 ? {7'd0, eb32[7:0]} : st64 ? {4'd0, eb64[10:0]} : eb80[14:0]) : 15'd0;
@@ -183,7 +187,7 @@ module fpu_seq(
                         else if (zb) begin X <= xma; st <= S_RP0; end
                         else begin ret <= S_AD0; st <= S_C0; end
                     end
-                    OP_MUL: begin X <= 68'd0; cn <= 7'd64; EA <= EA + EB + 18'sd1; st <= S_ML1; end
+                    OP_MUL: begin X <= 68'd0; cn <= 7'd4; EA <= EA + EB + 18'sd1; st <= S_ML1; end
                     OP_DIV: begin X <= xma; EA <= EA - EB; st <= S_DV0; end
                     OP_SQRT: begin MB <= MA; MA <= 66'd0; X <= 68'd0; odd <= EA[0]; EA <= {EA[17], EA[17:1]}; cn <= 7'd66; st <= S_SQ0; end
                     OP_FIST, OP_RND: begin
@@ -223,9 +227,9 @@ module fpu_seq(
                 else begin ret <= S_RP1; st <= X[67] ? S_RP0 : S_NRM; end
             end
             // ---- multiplication: add (if the multiplier bit = 1) and shift; 2 clocks per bit ----
-            S_ML1: begin if (MB[0]) X <= sumk; st <= S_ML2; end
+            S_ML1: begin PR <= ama * MB[15:0]; st <= S_ML2; end
             S_ML2: begin
-                X <= shr1; MB <= {1'b0, MB[65:1]}; cn <= cn - 7'd1;
+                X <= {msum[83:17], |msum[16:0]}; MB <= {16'd0, MB[65:16]}; cn <= cn - 7'd1;
                 if (cn == 7'd1) begin ret <= S_RP1; st <= S_NRM; end else st <= S_ML1;
             end
             // ---- division: X = remainder, MA = divisor, MB = quotient (66 bits); 2 clocks per bit ----
