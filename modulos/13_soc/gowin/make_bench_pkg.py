@@ -5,7 +5,8 @@
 #   <out>/src/*.mem             : ROM images (uop, decoder, governor), copied from ../pnr
 #   <out>/src/monitor_l0..7.hex : the bench firmware (../bench/gen_bench.py), loaded into the boot buffer in place of the monitor
 #   <out>/src/tangnano20k_bench.cst, r8064_bench.sdc, <out>/gowin_build.tcl, <out>/rodar_gowin.bat, <out>/LEIA-ME_bench.txt
-# Usage: python3 make_bench_pkg.py [--bm] [--nofpu] <out_dir> [<absolute path of out_dir/src as Gowin will see it, e.g. C:/Users/me/Documents/R8064_bench/src/>]
+# Usage: python3 make_bench_pkg.py [--bm | --fpu] [--nofpu] <out_dir> [<absolute path of out_dir/src as Gowin will see it, e.g. C:/Users/me/Documents/R8064_bench/src/>]
+#   --fpu: the boot image is the FPU test (../bench/fpu/gen_fpu_board.py)
 #   --bm: the boot image is the board benchmarks (../bench/bm/board/build_board.py: Dhrystone, Sieve, soft float; needs SDCC, see there)
 #         instead of the timing-bench firmware. REV53: 27 MHz (CPT 8), FPU included, reference timings ../bench/ref_rev53.json.
 import os, re, shutil, sys, subprocess
@@ -27,11 +28,15 @@ def bin_roms(text, src_dir, out_dir, P):
                 f.write(format(v, '0%db' % w) + '\n')
     return text
 HERE = os.path.dirname(os.path.abspath(__file__)); PNR = os.path.join(HERE, '..', 'pnr'); BENCH = os.path.join(HERE, '..', 'bench')
-BM = '--bm' in sys.argv; NOFPU = '--nofpu' in sys.argv; args = [a for a in sys.argv[1:] if not a.startswith('--')]
+BM = '--bm' in sys.argv; FPUT = '--fpu' in sys.argv; NOFPU = '--nofpu' in sys.argv; args = [a for a in sys.argv[1:] if not a.startswith('--')]
 out = os.path.abspath(args[0]); src = os.path.join(out, 'src'); os.makedirs(src, exist_ok=True)
 P = args[1] if len(args) > 1 else src.replace('\\', '/') + '/'
 if not P.endswith('/'): P += '/'
-if BM:
+if FPUT:   # FPU test (bench/fpu/gen_fpu_board.py: runs the RTL simulation twice, ~20 min)
+    subprocess.run([sys.executable, os.path.join(BENCH, 'fpu', 'gen_fpu_board.py'), os.path.join(out, 'fpu_build')], check=True)
+    for g in range(8): shutil.copy(os.path.join(out, 'fpu_build', 'monitor_l%d.hex' % g), src)
+    shutil.copy(os.path.join(out, 'fpu_build', 'board.bin'), os.path.join(src, 'bench.bin'))
+elif BM:
     subprocess.run([sys.executable, os.path.join(BENCH, 'bm', 'board', 'build_board.py'), os.path.join(out, 'bm_build')], check=True)
     for g in range(8): shutil.copy(os.path.join(out, 'bm_build', 'monitor_l%d.hex' % g), src)
     shutil.copy(os.path.join(out, 'bm_build', 'board.bin'), os.path.join(src, 'bench.bin'))
