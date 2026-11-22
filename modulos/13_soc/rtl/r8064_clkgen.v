@@ -4,7 +4,9 @@
 //   SRC=1  clk_in = 3.579545 MHz (external crystal/oscillator or MSX slot CLOCK) -> rPLL x 16 = 57.2727 MHz (exact, synchronous with the MSX)
 //   SRC=2  clk_in = 57.2727 MHz active oscillator directly (no PLL; locked = 1; clk_sdram = clk)
 //   SRC=4  clk_in = board crystal, 27 MHz        -> rPLL 27 x 8 / 5        = 43.2 MHz    (REV52 bench: 3.6 MHz x 12, +0.57 % over 42.9545; PFD 5.4 MHz, VCO 691 MHz)
-//   SRC=3  clk_in = 14.31818 MHz (4 x 3.579545; e.g.: clk14m pin of the cartridge board) -> rPLL x MUL14: 4 = 57.2727 MHz, 3 = 42.9545 MHz (exact)
+//   SRC=3  clk_in = 14.31818 MHz (4 x 3.579545; e.g.: clk14m pin of the cartridge board) -> rPLL x MUL14: 4 = 57.2727 MHz, 3 = 42.9545 MHz, 2 = 28.6364 MHz (exact)
+//   SRC=5  clk_in = board crystal, 27 MHz        -> rPLL x 1                = 27 MHz      (REV53 bench; the PLL only gives the SDRAM clock phase; 28.64 MHz
+//          is not reachable from 27 MHz with PFD >= 3 MHz: 27 x 17/16 needs PFD 1.69 MHz). VCO = fout x ODIV, ODIV 32 below 31.25 MHz.
 // A "bare" 3.579545 MHz crystal needs an external oscillator (e.g. Pierce with 74HC04, or an oscillator module); the FPGA receives the already-square wave on clk_in.
 // VCO (SRC=0): 27/8*17*16 = 918 MHz ; (SRC=1): 3.579545*16*16 = 916.4 MHz - both within the GW2A's 500-1250 MHz.
 // rst: active high; stays at 1 until the PLL locks + 16 cycles of the generated clock (synchronous release).
@@ -25,7 +27,7 @@ module r8064_clkgen #(parameter SRC = 1, parameter [3:0] SDR_PSDA = 4'd4, parame
         assign pll_lock = 1'b1;
     end else begin : g_pll
 `ifdef SIM
-        localparam MUL = (SRC == 0) ? 17 : (SRC == 3) ? MUL14 : (SRC == 4) ? 8 : 16;
+        localparam MUL = (SRC == 0) ? 17 : (SRC == 3) ? MUL14 : (SRC == 4) ? 8 : (SRC == 5) ? 1 : 16;
         localparam DIV = (SRC == 0) ? 8  : (SRC == 4) ? 5 : 1;
         real per, half, t_last; integer n; reg ck, lk;
         initial begin ck = 0; lk = 0; n = 0; t_last = 0; per = 0; half = 1; end
@@ -45,11 +47,11 @@ module r8064_clkgen #(parameter SRC = 1, parameter [3:0] SDR_PSDA = 4'd4, parame
         // PSDA_SEL as a literal string (Gowin synthesis does not accept the string built by arithmetic: EX0205 -> "0000")
         localparam [4*8-1:0] SDR_PSDA_S = (SDR_PSDA == 4'd0) ? "0000" : (SDR_PSDA == 4'd1) ? "0001" : (SDR_PSDA == 4'd2) ? "0010" : (SDR_PSDA == 4'd3) ? "0011" : (SDR_PSDA == 4'd4) ? "0100" : (SDR_PSDA == 4'd5) ? "0101" : (SDR_PSDA == 4'd6) ? "0110" : (SDR_PSDA == 4'd7) ? "0111" : (SDR_PSDA == 4'd8) ? "1000" : (SDR_PSDA == 4'd9) ? "1001" : (SDR_PSDA == 4'd10) ? "1010" : (SDR_PSDA == 4'd11) ? "1011" : (SDR_PSDA == 4'd12) ? "1100" : (SDR_PSDA == 4'd13) ? "1101" : (SDR_PSDA == 4'd14) ? "1110" : "1111";
         rPLL #(
-            .FCLKIN       ((SRC == 0 || SRC == 4) ? "27" : (SRC == 3) ? "14.31818" : "3.579545"),
+            .FCLKIN       ((SRC == 0 || SRC == 4 || SRC == 5) ? "27" : (SRC == 3) ? "14.31818" : "3.579545"),
             .DEVICE       ("GW2AR-18C"),
             .IDIV_SEL     ((SRC == 0) ? 7  : (SRC == 4) ? 4 : 0),
-            .FBDIV_SEL    ((SRC == 0) ? 16 : (SRC == 3) ? (MUL14 - 1) : (SRC == 4) ? 7 : 15),   // VCO = fout x 16: 916 MHz (x4) / 687 MHz (x3), within 500-1250 MHz
-            .ODIV_SEL     (16),
+            .FBDIV_SEL    ((SRC == 0) ? 16 : (SRC == 3) ? (MUL14 - 1) : (SRC == 4) ? 7 : (SRC == 5) ? 0 : 15),   // VCO = fout x 16: 916 MHz (x4) / 687 MHz (x3), within 500-1250 MHz
+            .ODIV_SEL     ((SRC == 5 || (SRC == 3 && MUL14 == 2)) ? 32 : 16),   // VCO 864 / 916 MHz for the 27 / 28.64 MHz outputs
             .DYN_IDIV_SEL ("false"), .DYN_FBDIV_SEL ("false"), .DYN_ODIV_SEL ("false"),
             .PSDA_SEL     (SDR_PSDA_S), .DYN_DA_EN ("false"), .DUTYDA_SEL ("1000"),
             .CLKOUT_FT_DIR(1'b1), .CLKOUTP_FT_DIR(1'b1), .CLKOUT_DLY_STEP(0), .CLKOUTP_DLY_STEP(0),

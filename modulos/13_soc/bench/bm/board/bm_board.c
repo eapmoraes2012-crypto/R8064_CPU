@@ -3,7 +3,10 @@
    by the bench hardware and the results checked. Output on the USB serial (115200 8N1). F = clock of the bench (43.2 MHz). */
 #include "../bm_rt.h"
 #include "bm_board.h"
-#define F_CLK 43200000UL
+#ifndef BM_FCLK
+#define BM_FCLK 27000000UL
+#endif
+#define F_CLK BM_FCLK            /* clock of the bench: 27 MHz (REV53), -DBM_FCLK=43200000UL for the REV52 build */
 unsigned int dhry_runs, sieve_runs, flt_runs;
 void dhry_main(void); void sieve_main(void); void flt_main(void);
 static unsigned char errs;
@@ -42,7 +45,7 @@ static void run_all(const char *mname, unsigned int druns, unsigned char all) {
 }
 void main(void) {
     errs = 0;
-    bm_puts("\nR8064 board benchmarks (REV52, bench clock 43.2 MHz; Z80 mode = 3.6 MHz)\n");
+    bm_puts("\nR8064 board benchmarks (REV53, bench clock "); bm_putfix(F_CLK / 10000UL, 2); bm_puts(" MHz; Z80 mode = "); bm_putfix(F_CLK / 80000UL, 3); bm_puts(" MHz, CPT 8)\n");
 #ifdef BM_QUICK   /* simulation: short runs, Z80 mode Dhrystone only */
     set_mode(4); run_all("R8064 native", 20, 1);
     set_mode(1); run_all("Z80 mode (MSX timing)", 5, 0);

@@ -1,3 +1,6 @@
+REV53 (22/11/2026): FPU back in, clock 28.636 MHz (14.31818 x 2; CPT = 8). Package = REV51 core, FPU, 2 DMA channels, 32-bit
+addresses, no MD64. The FPU build reached 40.08 MHz in REV51, so 28.64 MHz has margin. Not yet run in Gowin.
+
 REV52 (21/11/2026): clock 42.9545 MHz (14.31818 x 3; CPT = 12). Package = REV51 core, 2 DMA channels, 32-bit addresses, no MD64, no FPU
 (with the FPU the REV51 build reached only 40.08 MHz). REV51 without FPU at 57.27 MHz: 57.50 MHz, 64 % logic (Gowin).
 

@@ -1,5 +1,5 @@
 #!/bin/sh
-# run_board_sim.sh - builds the quick board image and simulates it on r8064_bench (cartridge build macros, CPT 12). Needs SDCC (see build_board.py).
+# run_board_sim.sh - builds the quick board image and simulates it on r8064_bench (cartridge build macros, CPT 8). Needs SDCC (see build_board.py).
 # Usage: sh run_board_sim.sh <work dir>
 set -e
 H=$(cd "$(dirname "$0")" && pwd); W=$(mkdir -p "$1" && cd "$1" && pwd); P=$H/../../../pnr

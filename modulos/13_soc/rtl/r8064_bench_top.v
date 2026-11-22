@@ -1,4 +1,4 @@
-// r8064_bench_top.v - TIMING BENCH for the bare Tang Nano 20K (no MSX): clkgen (27 MHz crystal -> 43.2 MHz, REV52; macro R8064_CLK57: 57.375 MHz) + SoC + embedded SDRAM
+// r8064_bench_top.v - TIMING BENCH for the bare Tang Nano 20K (no MSX): clkgen (27 MHz crystal -> 27 MHz, REV53; macros R8064_CLK43: 43.2 MHz, R8064_CLK57: 57.375 MHz) + SoC + embedded SDRAM
 // + r8064_bench_io (UART to the PC through the board's USB serial, pin 69, 115200 8N1; clock counter driven by the core PC).
 // The firmware (modulos/13_soc/bench, image monitor_l0..7.hex) runs every instruction case in a loop, exactly as tb_meas.v does in simulation:
 //   per run: the firmware builds the loop at BUILD, writes its address to the bench, arms it (GO) and jumps to it. The bench counts the clocks
@@ -10,11 +10,15 @@
 `define R8064_B_SRC 0
 `define R8064_B_CPT 16
 `define R8064_B_BAUD 498
-`else
+`elsif R8064_CLK43
 `define R8064_B_SRC 4
 `define R8064_B_CPT 12
 `define R8064_B_BAUD 375
-`endif
+`else
+`define R8064_B_SRC 5
+`define R8064_B_CPT 8
+`define R8064_B_BAUD 234
+`endif   // REV53: 27 MHz (CPT 8: Z80 mode at 3.375 MHz), UART 27e6/115200 = 234.4
 module r8064_bench_top #(parameter [3:0] SDR_PSDA = 4'd12)(   // 12 = 270 degrees: measured on the board (r8064_sdtest_top: phases 10..13 without errors, 4 = 100% errors)
     input  wire        clk27,        // board crystal (pin 4)
     input  wire        btn_rst,      // KEY1 (pin 88), pressed = 1

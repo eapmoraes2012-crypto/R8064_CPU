@@ -1,14 +1,16 @@
 // r8064_cart_top.v - MSX CARTRIDGE top for the V9968_Cartridge board (Tang Nano 20K): clkgen + SoC + embedded SDRAM + slot I/O interface (r8064_slot_if).
 // The board connects only A0-A7, D0-D7, /IORQ, /RD, /WR, /RESET, WAIT, INT and DIR/BUSDIR to the FPGA: the R8064 is an MSX I/O peripheral (ports 0Bh/0Ch/0Dh, layer 1 of the protocol:
 // FIFOs + state + length). Layer 2 (16 KB window at 8000h-BFFFh) requires /SLTSL, A8-A15 and /MREQ, which the board does NOT have; window accesses are disabled (sb_* = 0).
-// Clock: the board's 14.31818 MHz crystal (pin 80) -> rPLL x CPT/4 (SRC = 3). REV52: 42.9545 MHz = 3.579545 x 12 (CPT = 12; macro R8064_CLK57 for the
-// previous 57.2727 MHz = x16). The governor scales with CPT (Z80 T-state = CPT clocks, R800 cycle = CPT/2) and the SDRAM refresh with REF_INT.
+// Clock: the board's 14.31818 MHz crystal (pin 80) -> rPLL x CPT/4 (SRC = 3). REV53: 28.6364 MHz = 3.579545 x 8 (CPT = 8, room for the FPU); macros
+// R8064_CLK43 (42.9545 MHz, CPT 12) and R8064_CLK57 (57.2727 MHz, CPT 16). The governor scales with CPT (Z80 T-state = CPT clocks, R800 cycle = CPT/2) and the SDRAM refresh with REF_INT.
 // SoC reset = PLL + button + slot /RESET (synchronized) + "restart the R8064" command (CMD.b3 of the FIFO), stretched by 16 clocks. Any reset redoes the SDRAM and the boot (BOOT=1).
 `ifdef R8064_CLK57
 `define R8064_CART_CPT 16
-`else
+`elsif R8064_CLK43
 `define R8064_CART_CPT 12
-`endif
+`else
+`define R8064_CART_CPT 8
+`endif   // REV53: 28.6364 MHz (x2, CPT 8) for the FPU; R8064_CLK43 = 42.9545 MHz, R8064_CLK57 = 57.2727 MHz
 module r8064_cart_top #(parameter SRC = 3, parameter [3:0] SDR_PSDA = 4'd12, parameter BOOT = 1, parameter CPT = `R8064_CART_CPT)(   // SDR_PSDA 12 = 270 degrees, measured with r8064_sdtest_top at 57.27 MHz
     input  wire        clk27,                 // Tang Nano 27 MHz crystal (pin 4), not used with SRC = 3
     input  wire        clk14m,                // board 14.31818 MHz oscillator (pin 80)

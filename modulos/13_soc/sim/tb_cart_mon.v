@@ -80,5 +80,5 @@ module tb_cart_mon;
         $display("errors=%0d", errs); if (errs == 0) $display("RESULT: CARTRIDGE + MONITOR OK"); else $display("RESULT: %0d ERRORS", errs);
         $finish;
     end
-    initial begin #900000000; $display("RESULT: TIMEOUT GLOBAL"); $finish; end   // REV52: 42.95 MHz clock (slower boot)
+    initial begin #1500000000; $display("RESULT: TIMEOUT GLOBAL"); $finish; end   // REV52: 42.95 MHz clock (slower boot)
 endmodule

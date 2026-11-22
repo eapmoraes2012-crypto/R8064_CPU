@@ -8,7 +8,7 @@ add_file $root/src/r8064_cart.sdc
 set_option -top_module r8064_cart_top
 set_option -output_base_name r8064_cart
 set_option -verilog_std sysv2017
-set_option -global_freq 57.28
+set_option -global_freq 28.64
 set_option -timing_driven 1
 set_option -gen_text_timing_rpt 1
 set_option -print_all_synthesis_warning 1
