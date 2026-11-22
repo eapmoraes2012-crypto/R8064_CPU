@@ -3,6 +3,20 @@
 // For each phase: reset the controller (SDRAM init), write 8192 64-bit words with a pattern, read them back and count the wrong words.
 // UART (pin 69, 115200 8N1), one line per phase:   "P=4 ERR=0000 BAD=00000 GOT=xxxxxxxxxxxxxxxx EXP=xxxxxxxxxxxxxxxx"
 //   (BAD/GOT/EXP: the first wrong word). The sweep repeats forever. LEDs (active low): 0 = PLL locked, 1 = blink, 2..5 = phase.
+// REV53b: -DR8064_SDT27 runs the same sweep at 27 MHz (rPLL x1, ODIV 32), the REV53 bench clock (one phase step = 2.31 ns).
+`ifdef R8064_SDT27
+`define SDT_IDIV 0
+`define SDT_FBDIV 0
+`define SDT_ODIV 32
+`define SDT_BAUD 9'd233
+`define SDT_REF 200
+`else
+`define SDT_IDIV 7
+`define SDT_FBDIV 16
+`define SDT_ODIV 16
+`define SDT_BAUD 9'd497
+`define SDT_REF 400
+`endif
 module r8064_sdtest_top (
     input  wire        clk27,
     input  wire        btn_rst,
@@ -21,7 +35,7 @@ module r8064_sdtest_top (
     reg ck = 0; always #8.7 ck = ~ck; assign clk = ck; assign clkp = ck; assign lock = 1'b1;
 `else
     rPLL #(
-        .FCLKIN("27"), .DEVICE("GW2AR-18C"), .IDIV_SEL(7), .FBDIV_SEL(16), .ODIV_SEL(16),
+        .FCLKIN("27"), .DEVICE("GW2AR-18C"), .IDIV_SEL(`SDT_IDIV), .FBDIV_SEL(`SDT_FBDIV), .ODIV_SEL(`SDT_ODIV),
         .DYN_IDIV_SEL("false"), .DYN_FBDIV_SEL("false"), .DYN_ODIV_SEL("false"),
         .PSDA_SEL("0000"), .DYN_DA_EN("true"), .DUTYDA_SEL("1000"),
         .CLKOUT_FT_DIR(1'b1), .CLKOUTP_FT_DIR(1'b1), .CLKOUT_DLY_STEP(0), .CLKOUTP_DLY_STEP(0),
@@ -39,7 +53,7 @@ module r8064_sdtest_top (
     reg  c_rst = 1'b1, req = 1'b0, we = 1'b0; reg [19:0] addr = 20'd0; reg [63:0] wdata = 64'd0;
     wire ready, rvalid, wdone, init_done; wire [63:0] rdata;
     wire s_dq_oe; wire [31:0] s_dq_o;
-    sdram_ctrl #(.INIT_CYC(20000)) u_sd(.clk(clk), .rst(c_rst), .req(req), .we(we), .addr(addr), .wdata(wdata), .be(8'hFF),
+    sdram_ctrl #(.INIT_CYC(20000), .REF_INT(`SDT_REF)) u_sd(.clk(clk), .rst(c_rst), .req(req), .we(we), .addr(addr), .wdata(wdata), .be(8'hFF),
         .ready(ready), .rvalid(rvalid), .rdata(rdata), .wdone(wdone), .init_done(init_done),
         .s_cke(O_sdram_cke), .s_cs_n(O_sdram_cs_n), .s_ras_n(O_sdram_ras_n), .s_cas_n(O_sdram_cas_n), .s_we_n(O_sdram_wen_n),
         .s_dqm(O_sdram_dqm), .s_ba(O_sdram_ba), .s_a(O_sdram_addr), .s_dq_o(s_dq_o), .s_dq_oe(s_dq_oe), .s_dq_i(IO_sdram_dq));
@@ -56,7 +70,7 @@ module r8064_sdtest_top (
     reg [9:0] tsh = 10'h3FF; reg [3:0] tbit = 4'd0; reg [8:0] tdiv = 9'd0; reg tbusy = 1'b0; reg tgo = 1'b0; reg [7:0] tch = 8'd0;
     always @(posedge clk) begin
         if (!tbusy) begin if (tgo) begin tsh <= {1'b1, tch, 1'b0}; tbit <= 4'd0; tdiv <= 9'd0; tbusy <= 1'b1; end end
-        else if (tdiv == 9'd497) begin tdiv <= 9'd0; tsh <= {1'b1, tsh[9:1]}; if (tbit == 4'd9) tbusy <= 1'b0; else tbit <= tbit + 4'd1; end
+        else if (tdiv == `SDT_BAUD) begin tdiv <= 9'd0; tsh <= {1'b1, tsh[9:1]}; if (tbit == 4'd9) tbusy <= 1'b0; else tbit <= tbit + 4'd1; end
         else tdiv <= tdiv + 9'd1;
     end
     assign uart_tx = tsh[0];
