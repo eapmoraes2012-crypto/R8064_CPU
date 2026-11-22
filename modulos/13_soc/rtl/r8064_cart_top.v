@@ -11,7 +11,9 @@
 `else
 `define R8064_CART_CPT 8
 `endif   // REV53: 28.6364 MHz (x2, CPT 8) for the FPU; R8064_CLK43 = 42.9545 MHz, R8064_CLK57 = 57.2727 MHz
-module r8064_cart_top #(parameter SRC = 3, parameter [3:0] SDR_PSDA = 4'd12, parameter BOOT = 1, parameter CPT = `R8064_CART_CPT)(   // SDR_PSDA 12 = 270 degrees, measured with r8064_sdtest_top at 57.27 MHz
+// SDRAM clock phase (REV53b): the good window is about T-7.0 ns .. T-2.7 ns of lag (T = clock period), fitted to the board measurements
+// (57.375 MHz: phases 10..13 good; 43.2 MHz: 12 good; 27 MHz: 12 corrupts every read). 16 steps of T/16: 57/43 MHz -> 12, 27/28.64 MHz -> 14.
+module r8064_cart_top #(parameter SRC = 3, parameter [3:0] SDR_PSDA = (`R8064_CART_CPT == 8) ? 4'd14 : 4'd12, parameter BOOT = 1, parameter CPT = `R8064_CART_CPT)(   // SDR_PSDA: see above
     input  wire        clk27,                 // Tang Nano 27 MHz crystal (pin 4), not used with SRC = 3
     input  wire        clk14m,                // board 14.31818 MHz oscillator (pin 80)
     input  wire        btn_rst,               // KEY1 button (pin 88): pressed = 1

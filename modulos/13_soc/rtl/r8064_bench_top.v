@@ -19,7 +19,9 @@
 `define R8064_B_CPT 8
 `define R8064_B_BAUD 234
 `endif   // REV53: 27 MHz (CPT 8: Z80 mode at 3.375 MHz), UART 27e6/115200 = 234.4
-module r8064_bench_top #(parameter [3:0] SDR_PSDA = 4'd12)(   // 12 = 270 degrees: measured on the board (r8064_sdtest_top: phases 10..13 without errors, 4 = 100% errors)
+// SDRAM clock phase (REV53b): the good window is about T-7.0 ns .. T-2.7 ns of lag (T = clock period), fitted to the board measurements
+// (57.375 MHz: phases 10..13 good; 43.2 MHz: 12 good; 27 MHz: 12 corrupts every read). 16 steps of T/16: 57/43 MHz -> 12, 27/28.64 MHz -> 14.
+module r8064_bench_top #(parameter [3:0] SDR_PSDA = (`R8064_B_CPT == 8) ? 4'd14 : 4'd12)(   // 57.375 MHz: r8064_sdtest_top phases 10..13 without errors, 4 = 100% errors
     input  wire        clk27,        // board crystal (pin 4)
     input  wire        btn_rst,      // KEY1 (pin 88), pressed = 1
     output wire        uart_tx,      // pin 69 -> BL616 -> USB serial on the PC
