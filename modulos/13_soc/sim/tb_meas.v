@@ -13,7 +13,7 @@ module tb_meas;
 `ifndef MEAS_REF
 `define MEAS_REF 400
 `endif
-    r8064_soc #(.INIT_CYC(2000), .CPT(`MEAS_CPT), .REF_INT(`MEAS_REF)) dut(   // REV52: -DMEAS_CPT=12 -DMEAS_REF=300 = clock of the board bench (43.2 MHz).clk(clk), .rst(rst), .irq(1'b1),
+    r8064_soc #(.INIT_CYC(2000), .CPT(`MEAS_CPT), .REF_INT(`MEAS_REF)) dut(.clk(clk), .rst(rst), .irq(1'b1),   // REV52: -DMEAS_CPT=12 -DMEAS_REF=300 = clock of the board bench (43.2 MHz)
         .io_we(io_we), .io_re(io_re), .io_a(io_a), .io_wd(io_wd), .io_rd(io_rd), .io_oe(io_oe), .io_x_we(iox_we), .io_x_re(iox_re), .io_x_a(iox_a), .io_x_wd(iox_wd), .io_x_rd(8'h5A), .port_c(8'd0),
         .sb_we(1'b0), .sb_re(1'b0), .sb_a(14'd0), .sb_wd(8'd0), .sb_rd(), .fm_we(1'b0), .fm_re(1'b0), .fm_a(2'd0), .fm_wd(8'd0), .fm_rd(fm_rd), .fifo_irq(fifo_irq), .fifo_rst(fifo_rst),
         .native64(nat), .clk_sel(csel), .is_z80(z80), .is_rom(rom), .mode_busy(mbusy), .dbg_pc(dbg_pc), .dbg_f(dbg_f), .dbg_sig(dbg_sig), .gov_cv(cv),

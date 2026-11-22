@@ -507,7 +507,7 @@ pi_x:   inc hl
         call putc
         ret
 
-s_ban:  db 13,10,13,10,"R8064 REV48 timing bench - Tang Nano 20K, native mode, code and data in cache",13,10
+s_ban:  db 13,10,13,10,"R8064 REV52 timing bench - Tang Nano 20K 43.2 MHz, native mode, code and data in cache",13,10
         db "clocks per instruction: hardware (this board) and simulation (RTL)",13,10,13,10
         db "instruction                       hardware  simul.  result",13,10
         db "--------------------------------- -------- ------- ------",13,10,0
