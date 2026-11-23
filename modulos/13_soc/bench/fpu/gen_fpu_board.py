@@ -71,7 +71,7 @@ def program(ref):
           'putc:   push af', 'pc_w:   in a,(90h)', '        and 1', '        jr nz,pc_w', '        pop af', '        out (90h),a',
           '        cp 10', '        jr nz,pc_c', '        xor a', '        ld (V_COL),a', '        ret', 'pc_c:   push af', '        ld a,(V_COL)', '        inc a', '        ld (V_COL),a',
           '        pop af', '        ret',
-          'S_HEAD: db 13,10,"R8064 FPU test (REV54, 80-bit FPU, native mode) - result: ST0 after the instruction (FST80, 20 hex digits)",13,10',
+          'S_HEAD: db 13,10,"R8064 FPU test (REV55, 80-bit FPU, native mode) - result: ST0 after the instruction (FST80, 20 hex digits)",13,10',
           '        db "clocks: instruction latency up to the result in memory; OK = result and clocks equal to the RTL simulation",13,10,13,10',
           '        db "instruction             result (80-bit)       clocks",13,10,0',
           'S_OK:   db "  OK",13,10,0', 'S_DF:   db "  DIFF",13,10,0',
