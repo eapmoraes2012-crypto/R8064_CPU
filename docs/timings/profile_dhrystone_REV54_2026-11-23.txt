@@ -1,0 +1,17 @@
+R8064 REV54 - clock profile of Dhrystone 2.1 (SDCC, Z80 code), 20 runs, native mode, CPT 8 (tb_bmp.v +prof, cartridge build macros)
+Window F0h..F1h = 246,020 clocks; 24,980 instructions, 37,428 micro-operations issued (1.50 per instruction), 3,664 taken branches.
+Each clock is counted once, in this priority order:
+  issue (a micro-op issued)                          37,428  15.2 %
+  flush (mispredict / serialization refetch)          1,544   0.6 %
+  hold (memory, multiplier/divider, FPU waits)       35,766  14.5 %
+  B waiting the issue spacing (seqc)                 89,669  36.4 %
+  B waiting bytes for the next micro-op (bs)          8,189   3.3 %
+  B waiting a register result (hazard hz)            29,735  12.1 %
+  B serialization (ser)                                   5   0.0 %
+  B empty, A busy: micro-op ROM (uop)                  8,612   3.5 %
+  B empty, A busy: bytes (bytes)                       1,198   0.5 %
+  B empty, A busy: length/decode (as)                 24,779  10.1 %
+  B empty, A loading (dwa_load)                        1,938   0.8 %
+  B empty, A capturing (capture)                       7,157   2.9 %
+Front end (A not ready) total 43,684 = 17.8 %.
+Z80 mode (same program, governed): 2,138,552 clocks = 267,319 T x 8 (exact).
