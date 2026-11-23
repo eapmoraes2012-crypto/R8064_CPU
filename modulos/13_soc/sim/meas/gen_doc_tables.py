@@ -150,6 +150,7 @@ for fn, name, block in (('R8064_Datasheet_Appendix_C.md', 'APPENDIX_C', C), ('R8
                         (os.path.basename(DS), 'TIMING_SUMMARY', S)):
     f = os.path.join(DOCS, fn); txt = open(f, encoding='utf-8').read()
     b, e = '<!-- BEGIN %s -->' % name, '<!-- END %s -->' % name
+    if name == 'TIMING_SUMMARY' and b not in txt: continue   # datasheet edition 1.0: the class summary moves to the timing edition
     assert b in txt and e in txt, (fn, name)
     txt = txt[:txt.index(b) + len(b)] + '\n' + '\n'.join(block) + '\n' + txt[txt.index(e):]
     open(f, 'w', encoding='utf-8').write(txt)
