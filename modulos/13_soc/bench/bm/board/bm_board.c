@@ -45,7 +45,7 @@ static void run_all(const char *mname, unsigned int druns, unsigned char all) {
 }
 void main(void) {
     errs = 0;
-    bm_puts("\nR8064 board benchmarks (REV53, bench clock "); bm_putfix(F_CLK / 10000UL, 2); bm_puts(" MHz; Z80 mode = "); bm_putfix(F_CLK / 8000UL, 3); bm_puts(" MHz, CPT 8)\n");
+    bm_puts("\nR8064 board benchmarks (REV54, bench clock "); bm_putfix(F_CLK / 10000UL, 2); bm_puts(" MHz; Z80 mode = "); bm_putfix(F_CLK / 8000UL, 3); bm_puts(" MHz, CPT 8)\n");
 #ifdef BM_QUICK   /* simulation: short runs, Z80 mode Dhrystone only */
     set_mode(4); run_all("R8064 native", 20, 1);
     set_mode(1); run_all("Z80 mode (MSX timing)", 5, 0);

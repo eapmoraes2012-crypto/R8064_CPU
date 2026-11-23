@@ -8,7 +8,7 @@
 # Usage: python3 make_bench_pkg.py [--bm | --fpu] [--nofpu] <out_dir> [<absolute path of out_dir/src as Gowin will see it, e.g. C:/Users/me/Documents/R8064_bench/src/>]
 #   --fpu: the boot image is the FPU test (../bench/fpu/gen_fpu_board.py)
 #   --bm: the boot image is the board benchmarks (../bench/bm/board/build_board.py: Dhrystone, Sieve, soft float; needs SDCC, see there)
-#         instead of the timing-bench firmware. REV53: 27 MHz (CPT 8), FPU included, reference timings ../bench/ref_rev53.json.
+#         instead of the timing-bench firmware. REV53: 27 MHz (CPT 8), FPU included, reference timings ../bench/ref_rev54.json.
 import os, re, shutil, sys, subprocess
 
 # ROMs whose width is not a multiple of 4 bits: Gowin EDA reports "Entry size .. does not match memory width" (EX2526) for their
@@ -41,7 +41,7 @@ elif BM:
     for g in range(8): shutil.copy(os.path.join(out, 'bm_build', 'monitor_l%d.hex' % g), src)
     shutil.copy(os.path.join(out, 'bm_build', 'board.bin'), os.path.join(src, 'bench.bin'))
 else:
-    subprocess.run([sys.executable, os.path.join(BENCH, 'gen_bench.py'), os.path.join(BENCH, 'ref_rev53.json'), src], check=True)
+    subprocess.run([sys.executable, os.path.join(BENCH, 'gen_bench.py'), os.path.join(BENCH, 'ref_rev54.json'), src], check=True)
 first = open(os.path.join(PNR, 'ys_cart.ys'), encoding='utf-8').read().split('\n')[0]
 defs = re.findall(r'-D(\w+)', first)
 if NOFPU: defs += ['R8064_NOFPU', 'R8064_NO_FPU']      # diagnosis: the same bench without the FPU

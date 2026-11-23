@@ -6,7 +6,7 @@
 # Usage: python3 gen_bench.py [<reference json from gen_meas, default ref_rev52.json>] [<out dir>]
 import sys, os, json, tempfile
 HERE = os.path.dirname(os.path.abspath(__file__)); ROOT = os.path.abspath(os.path.join(HERE, '..', '..', '..'))
-REF = sys.argv[1] if len(sys.argv) > 1 else os.path.join(HERE, 'ref_rev53.json')
+REF = sys.argv[1] if len(sys.argv) > 1 else os.path.join(HERE, 'ref_rev54.json')
 OUT = sys.argv[2] if len(sys.argv) > 2 else os.path.join(HERE, 'out')
 os.makedirs(OUT, exist_ok=True)
 TMP = tempfile.mkdtemp(prefix='bench_')
@@ -507,7 +507,7 @@ pi_x:   inc hl
         call putc
         ret
 
-s_ban:  db 13,10,13,10,"R8064 REV53 timing bench - Tang Nano 20K 27 MHz (FPU), native mode, code and data in cache",13,10
+s_ban:  db 13,10,13,10,"R8064 REV54 timing bench - Tang Nano 20K 27 MHz (FPU), native mode, code and data in cache",13,10
         db "clocks per instruction: hardware (this board) and simulation (RTL)",13,10,13,10
         db "instruction                       hardware  simul.  result",13,10
         db "--------------------------------- -------- ------- ------",13,10,0

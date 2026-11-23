@@ -27,8 +27,9 @@ module r8064_memsys #(parameter INIT_CYC = 20000, parameter REF_INT = 400)(
     wire i_new   = (ist == S_IDLE) && c_i_req && !i_ack_r;   // !i_ack_r: on the fault-ack clock the core still holds the request (do not accept again)
     wire i_byp   = i_new && !mmu_en;
     wire iv_req  = i_new && mmu_en;
-    wire ic_req  = (ist == S_CREQ);
-    wire [19:0] ic_addr = ipa[22:3];
+    // REV54: with the MMU off the request goes to the I-cache in the SAME clock (IDLE -> WAIT): 2 clocks per fetch instead of 3
+    wire ic_req  = (ist == S_CREQ) || i_byp;
+    wire [19:0] ic_addr = (ist == S_IDLE) ? c_i_pa[22:3] : ipa[22:3];
     wire i_acc_v = iv_req && iv_ready;
     always @(posedge clk) begin
         if (rst) begin i_cancel <= 1'b0; ist <= S_IDLE; i_fault <= 1'b0; i_cause <= 3'd0; i_ack_r <= 1'b0; ipa <= 32'd0; end
@@ -36,7 +37,7 @@ module r8064_memsys #(parameter INIT_CYC = 20000, parameter REF_INT = 400)(
             i_ack_r <= 1'b0; i_fault <= 1'b0;
             if (ist == S_IDLE) i_cancel <= 1'b0; else if (!c_i_req) i_cancel <= 1'b1;
             case (ist)
-                S_IDLE: if (i_byp) begin ipa <= c_i_pa[31:0]; ist <= S_CREQ; end
+                S_IDLE: if (i_byp) begin ipa <= c_i_pa[31:0]; ist <= ic_ready ? S_WAIT : S_CREQ; end
                         else if (i_acc_v) ist <= S_XL;
                 S_XL: if (iv_pvalid) begin
                           if (ican) ist <= S_IDLE;

@@ -111,11 +111,14 @@ module r8064_core_min #(
         if (rst) begin wp <= 0; qcnt <= 0; qoff <= 0; skip <= 0; drop <= 0; ireq_r <= 0; fa <= 64'd0; ifp <= 1'b0; ifa <= 64'd0; ifc <= 3'd0; end
         else if (flush) begin
             wp <= 0; qcnt <= 0; qoff <= {2'b00, flush_tgt[2:0]}; skip <= flush_tgt[2:0]; fa <= {flush_tgt[63:3], 3'b000};
-            drop <= 1'b0; ireq_r <= 1'b0; ifp <= 1'b0;   // request may be withdrawn before the ack (the cache fetch interface accepts cancellation)
+            drop <= 1'b0; ifp <= 1'b0;
+            // request may be withdrawn before the ack (the cache fetch interface accepts cancellation). REV54: when nothing is in flight
+            // (no request, or its ack is in this clock) the request to the new address goes out at once (saves the re-request clock)
+            ireq_r <= !ireq_r || i_ack;
         end else if (redir) begin
             // REV51: predicted branch: fetch restarts at the target; the r_pend bytes of B/A stay counted just before it (never read again)
             wp <= 0; qcnt <= r_pend; qoff <= {2'b00, p_tgt[2:0]} - r_pend[4:0]; skip <= p_tgt[2:0]; fa <= {p_tgt[63:3], 3'b000} & AMASK;
-            drop <= 1'b0; ireq_r <= 1'b0;
+            drop <= 1'b0; ireq_r <= !ireq_r || i_ack;   // REV54: as in the flush
         end else begin
             if (i_ack && ireq_r) begin
                 // REV48: back-to-back fetch: keep the request up if the queue will still have room for 8 more bytes (saves the re-request clock)
