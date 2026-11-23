@@ -70,15 +70,21 @@ module r8064_memsys #(parameter INIT_CYC = 20000, parameter REF_INT = 400)(
     wire d_new  = (dst == S_IDLE) && c_d_req && !d_ack_r && !c_d_ack;   // same: posted/fault ack with the core's request still in the air
     wire d_byp  = d_new && !mmu_en;                                     // REV48: MMU off -> straight to the cache
     wire dv_req = d_new && mmu_en;
-    wire dc_req = (dst == S_CREQ);
-    wire [19:0] dc_addr = dpa[22:3];
+    // REV55: with the MMU off the access goes to the D-cache in the SAME clock (IDLE -> WAIT, or the posted write acked at once): 1 clock less per access
+    wire dc_req = (dst == S_CREQ) || d_byp;
+    wire [19:0] dc_addr = (dst == S_IDLE) ? c_d_pa[22:3] : dpa[22:3];
     wire d_acc_v = dv_req && dv_ready;
     always @(posedge clk) begin
         if (rst) begin dst <= S_IDLE; d_fault_w <= 1'b0; d_cause_w <= 3'd0; d_ack_r <= 1'b0; dpa <= 32'd0; end
         else begin
             d_ack_r <= 1'b0; d_fault_w <= 1'b0;
             case (dst)
-                S_IDLE: if (d_byp) begin dpa <= c_d_pa[31:0]; dst <= S_CREQ; end
+                S_IDLE: if (d_byp) begin
+                            dpa <= c_d_pa[31:0];
+                            if (!dc_ready) dst <= S_CREQ;
+                            else if (c_d_we) d_ack_r <= 1'b1;           // posted write accepted now
+                            else dst <= S_WAIT;
+                        end
                         else if (d_acc_v) dst <= S_XL;
                 S_XL: if (dv_pvalid) begin
                           if (dv_pfault) begin d_fault_w <= 1'b1; d_cause_w <= dv_pcause; d_ack_r <= 1'b1; dst <= S_IDLE; end
