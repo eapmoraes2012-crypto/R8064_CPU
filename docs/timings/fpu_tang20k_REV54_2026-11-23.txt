@@ -1,0 +1,4 @@
+R8064 FPU test (REV54, 80-bit FPU, native mode) on the Tang Nano 20K at 27 MHz, 2026-11-23 - 60 OK, 0 different
+(64 x 16 multiplier steps and faster fetch; results bit-identical to REV53c, see bench/fpu/fpu_ref_rev54.txt for every line)
+FADD 28-32, FMUL 28-31 (REV53c: 150), FDIV 154-157, FSQRT 220-222, FSIN/FCOS 1,601-1,755 (REV53c: ~5,200), FTAN 1,755-1,912,
+FLN 844-1,562, FYL2X 791, FYL2P 1,395, FREM/FREM1 263, constants 6-8 clocks.
