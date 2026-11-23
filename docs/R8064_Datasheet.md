@@ -39,6 +39,8 @@ The project is verified by simulation (iverilog/vvp and Verilator), by synthesis
 
 The cartridge REV48 has not been placed and routed yet (same core as the bench; the slot interface replaces the bench UART).
 
+**REV54 (2026-11-23): FPU multiplication 16 bits per step (64 x 16 product on DSP blocks) and faster instruction fetch** (MMU off: 2 clocks per 8-byte fetch instead of 3; after a flush or predicted redirect the new request goes out at once). On the Tang Nano 20K at 27 MHz: bench **256 OK, 0 different** (JP nn 10.1 -> 6.7 clocks, JR e 9.8 -> 6.4, CALL/RET about -3), FPU test **60 OK** (FMUL 150 -> 30 clocks, FSIN/FCOS ~5,200 -> ~1,700, results bit-identical). Gowin: 89 % logic, 95 % CLS, 45/46 BSRAM, Fmax 34.5 MHz. Dhrystone (Z80 code) +2 %. References `bench/ref_rev54.json`, `bench/fpu/fpu_ref_rev54.txt`; results `docs/timings/bench_tang20k_REV54_2026-11-23.txt`, `docs/timings/fpu_tang20k_REV54_2026-11-23.txt`.
+
 **REV53c FPU on the board (2026-11-22):** the FPU test (`bench/fpu/gen_fpu_board.py`, Gowin project from `make_bench_pkg.py --fpu`) gives **60 OK, 0 different** on the Tang Nano 20K at 27 MHz: the 80-bit results and the latencies (FADD ~30 clocks, FMUL ~150, FDIV ~155, FSQRT ~220, FSIN/FCOS/FTAN 4,700-5,400) are equal to the RTL simulation (`docs/timings/fpu_tang20k_REV53c_2026-11-22.txt`).
 
 **REV53c (2026-11-22): the FPU build runs on the board.** The REV53 bench with the FPU (98 % logic, 100 % CLS, 46/46 BSRAM) ran garbage from the first instruction, while the same bench without the FPU worked; the SDRAM phase sweep at 27 MHz (`r8064_sdtest_top -DR8064_SDT27`) passes at phases 12..15, so it was not the SDRAM (phase 14 is now the default at CPT 8). Fix: `R8064_NO_DMA` (the DMA keeps only the boot copy; CR19..CR30 and ports EDh-EFh are ignored) and page 32 of the ED decoder ROM_B as logic (the BSRAM ROM_B is exactly 8192 x 10). Gowin: 88 % logic, 94 % CLS, Fmax 35.97 MHz at 27 MHz. Bench on the Tang Nano 20K: selftest OK, **256 OK, 0 different** (`docs/timings/bench_tang20k_REV53c_2026-11-22.txt`). The bench does not contain FPU instructions, so the FPU itself is not yet exercised on the board.
@@ -905,6 +907,7 @@ Source: `13_soc/resultado_soc.txt`.
 | REV49 | 2026-11-21 | cartridge build with the FPU (REV49c: FPU, 2 DMA channels, 32-bit addresses, no MD64); register-file port D in LUT RAM |
 | REV50 | 2026-11-21 | overlapped two-stage decoder (issue floor 8 → 4 clocks); partial-write interlock without the W wait; Dhrystone +18 % |
 | REV51 | 2026-11-21 | static branch prediction in the decoder with X2 verification, return stack; refetch after CR writes; Dhrystone 2.60 DMIPS |
+| REV54 | 2026-11-23 | FMUL on DSP (64 x 16 per step), 2-clock fetch, no idle clock after redirects; bench 256/256 and FPU test 60/60 OK on the board |
 | REV53c | 2026-11-22 | FPU build without the DMA (boot copy only) and ROM_B page 32 as logic: 88 % logic; bench 256/256 OK on the board |
 | REV53 | 2026-11-22 | FPU back in the cartridge at 28.636 MHz (CPT = 8); bench and board benchmarks at 27 MHz |
 | REV52 | 2026-11-21 | cartridge clock 42.9545 MHz (CPT = 12, parameter chain); cartridge without the FPU (FPU path 40 MHz) |
