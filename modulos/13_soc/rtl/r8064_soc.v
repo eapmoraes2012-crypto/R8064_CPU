@@ -63,7 +63,7 @@ module r8064_soc #(parameter FIFO_BASE = 8'hE8, parameter INIT_CYC = 20000, para
     // REV47: registered reset of the CPU system (rst | boot_busy goes into the clock-enable of the whole pipeline: was a critical path
     // with long routing). Releases the core 1 clock later.
     reg sys_rst_q; always @(posedge clk) sys_rst_q <= rst | boot_busy;
-    r8064_msx_sys #(.FIFO_BASE(FIFO_BASE), .CPT(CPT)) u_sys(.clk(clk), .rst(sys_rst_q), .irq(irq & ~dma_irq),
+    r8064_msx_sys #(.FIFO_BASE(FIFO_BASE), .CPT(CPT)) u_sys(.clk(clk), .rst(sys_rst_q), .irq(irq | dma_irq),   // active-high INT: external request OR the DMA completion interrupt
         .i_req(c_i_req), .i_ack(c_i_ack), .i_paddr(c_i_pa), .i_rdata(c_i_rd),
         .d_req(c_d_req), .d_we(c_d_we), .d_paddr(c_d_pa), .d_size(c_d_sz), .d_wdata(c_d_wd), .d_be(c_d_be), .d_ack(c_d_ack), .d_rdata(c_d_rd),
         .i_hit(hit_i), .d_hit(hit_d), .d_wr_ok(wr_ok),
@@ -78,7 +78,7 @@ module r8064_soc #(parameter FIFO_BASE = 8'hE8, parameter INIT_CYC = 20000, para
         .dbg_pc(dbg_pc), .dbg_f(dbg_f), .dbg_sig(dbg_sig), .gov_cv(gov_cv));
 
     // ---------------- memory subsystem ----------------
-    r8064_memsys #(.INIT_CYC(INIT_CYC), .REF_INT(REF_INT)) u_mem(.clk(clk), .rst(rst),
+    r8064_memsys #(.INIT_CYC(INIT_CYC), .REF_INT(REF_INT)) u_mem(.clk(clk), .rst(rst), .smc_en(!native64),
         .c_i_req(c_i_req), .c_i_ack(c_i_ack), .c_i_pa(c_i_pa), .c_i_rd(c_i_rd),
         .c_d_req(c_d_req), .c_d_we(c_d_we), .c_d_ack(c_d_ack), .c_d_pa(c_d_pa), .c_d_wd(c_d_wd), .c_d_be(c_d_be), .c_d_rd(c_d_rd),
         .mmu_en(mmu_en), .mmu_user(mmu_user), .mmu_asid(mmu_asid), .mmu_root(mmu_root),

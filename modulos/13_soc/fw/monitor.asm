@@ -21,6 +21,7 @@ V_SIZE equ 2130h
 V_LEN  equ 2132h
 V_TMP  equ 2134h
 V_EXIT equ 2138h      ; 8 aligned bytes
+V_DMA  equ 2140h      ; 1 = DMA present (detected at start), 0 = copies by the CPU (R8064_NO_DMA builds)
 MSGB   equ 2200h      ; received message (up to 2048 bytes)
 STG    equ 3000h      ; DMA staging area (2 KB)
 STACK  equ 2FF0h
@@ -39,6 +40,13 @@ clr:    ld (hl),a
         djnz clr
         ld a,80h
         ld (SCR_C+3),a
+        ld a,01h              ; DMA detection: the IE port (EFh) keeps bit 0 only when the DMA exists
+        out (0EFh),a
+        in a,(0EFh)
+        and 01h
+        ld (V_DMA),a
+        xor a
+        out (0EFh),a
 main:   in a,(FFLG)
         and 01h
         jr z,main
@@ -126,15 +134,21 @@ finr:   ld a,c                ; BC = total size: LEN and DONE (returns the windo
 op_hello: xor a
         call rsph
         ld hl,hello_d
-        ld b,11
+        ld b,10
 hl1:    ld a,(hl)
         out (FDATA),a
         inc hl
         djnz hl1
+        ld a,(V_DMA)          ; features: window only with the DMA
+        or a
+        ld a,07h
+        jr nz,hl2
+        ld a,06h
+hl2:    out (FDATA),a
         ld bc,14
         jp fin
 hello_d: db 'R8064'
-        db 01h,00h,08h,00h,40h,07h   ; version 1, max msg 2048, block 16384, features: window|EXEC|CRC
+        db 01h,00h,08h,00h,40h       ; version 1, max msg 2048, block 16384 (features byte sent by op_hello)
 ; ---------------------------------------------------------------- utilities
 chka:   inc hl                ; HL -> 4 bytes of physical address; Z = valid (8 MB: byte3 = 0, bit 23 = 0)
         inc hl
@@ -166,7 +180,40 @@ c8e:    ld a,l
         inc de
 c8f:    ex de,hl
         ret
-dmarun: ld a,l                ; HL = words; SCR_S/SCR_D already filled. NZ on return = error
+dmarun: ld a,(V_DMA)          ; HL = words; SCR_S/SCR_D already filled. NZ on return = error
+        or a
+        jr nz,dmahw
+        ld a,(SCR_S+2)        ; no DMA: copy by the CPU (native mode, MMU off: 32-bit physical addresses)
+        ld c,a
+        ld a,(SCR_D+2)
+        or c
+        and 80h               ; the window buffer (bit 23) is reachable only by the DMA
+        ret nz
+        ld b,h
+        ld c,l
+        ld a,b
+        or c
+        ret z
+        ld hl,SCR_D
+        db 0EDh,39h,14h       ; LDQ DE,(HL)
+        ld hl,SCR_S
+        db 0EDh,39h,24h       ; LDQ HL,(HL)
+        db 0EDh,39h,59h,08h,00h,00h,00h,00h,00h,00h,00h   ; LDQ IY,8
+cpl:    db 0EDh,39h,3Ch       ; LDQ AX,(HL)
+        db 0EDh,39h,0D7h      ; LDQ (DE),AX
+        db 0EDh,3Eh,0A3h      ; ADDQ HL,IY
+        db 0EDh,3Eh,93h       ; ADDQ DE,IY
+        dec bc
+        ld a,b
+        or c
+        jr nz,cpl
+        db 0EDh,39h,61h,00h,00h,00h,00h,00h,00h,00h,00h   ; LDQ HL,0 (the Z80 code of the monitor uses HL and DE as 16-bit
+        db 0EDh,39h,51h,00h,00h,00h,00h,00h,00h,00h,00h   ; LDQ DE,0  addresses: in native mode their high bits must be 0)
+        db 0EDh,39h,79h,04h,00h,00h,00h,00h,00h,00h,00h   ; LDQ AX,4
+        db 0EDh,0Ch,17        ; MTCR 17: invalidates the I and D caches (as the DMA does at the end of a transfer)
+        xor a
+        ret
+dmahw:  ld a,l
         ld (SCR_C),a
         ld a,h
         ld (SCR_C+1),a

@@ -19,7 +19,10 @@ module cache_dm #(parameter WR = 1, parameter WBD = 4, parameter IDX = 8, parame
     output reg  [7:0]  m_be,
     input  wire        m_accept, m_done,
     input  wire [63:0] m_rdata,
-    output reg  [31:0] st_rd_hit, st_rd_miss, st_wr, st_wr_hit
+    output reg  [31:0] st_rd_hit, st_rd_miss, st_wr, st_wr_hit,
+    // REV56: invalidation of ONE line (inv_ln pulse, set inv_set; I cache, self-modifying code) and 'write buffer empty' (D cache)
+    input  wire        inv_ln, input wire [IDX-1:0] inv_set,
+    output wire        wb_idle
 );
     // ---------------- arrays
     localparam TB = 18 - IDX;   // tag bits
@@ -27,6 +30,7 @@ module cache_dm #(parameter WR = 1, parameter WBD = 4, parameter IDX = 8, parame
     // tags with valid bit (bit 10), in 2 copies (A: read with the new address, B: read with that of stage 1) so there is no mux dependent on 'accept'
     reg [TB:0] tA0 [0:(1<<IDX)-1]; reg [TB:0] tB0 [0:(1<<IDX)-1];
     reg inv_pend, sweeping; reg [IDX-1:0] sw;
+    reg ln_pend, fill_poison; reg [IDX-1:0] ln_set;   // REV56: one-line invalidation pending; a fill in progress during it ends invalid
     // stage 1
     reg        s1_valid, s1_ok, s1_we; reg [19:0] s1_addr; reg [63:0] s1_wd; reg [7:0] s1_be;
     wire [TB-1:0] s1_tag = s1_addr[19:IDX+2]; wire [IDX-1:0] s1_set = s1_addr[IDX+1:2];
@@ -58,7 +62,7 @@ module cache_dm #(parameter WR = 1, parameter WBD = 4, parameter IDX = 8, parame
     // B2B=1: accepts a new access in the same clock in which the stage-1 read hit ends (1 access/clock).
     // B2B=0: only accepts with stage 1 empty; takes hit0 (and all the hit logic) off the ready -> accept -> BSRAM address path.
     //        Valid when the client never presents req while the previous read has not yet been answered (memsys: dst/ist only return to S_CREQ >= 3 clocks after rvalid).
-    assign ready  = !sweeping && (!s1_valid || (B2B != 0 && rd_hit));
+    assign ready  = !sweeping && !ln_pend && (!s1_valid || (B2B != 0 && rd_hit));
     assign accept = req && ready;
     assign rvalid = rd_hit;
     assign rdata  = hword;
@@ -72,9 +76,11 @@ module cache_dm #(parameter WR = 1, parameter WBD = 4, parameter IDX = 8, parame
     wire        d0_we = wr_hit_upd || fill_wr;
     wire [IDX+1:0] d_wa = fill_wr ? {s1_set, fk} : s1_addr[IDX+1:0];
     wire [63:0] d_wd = fill_wr ? m_rdata : mrg;
-    wire        tg_we0 = sweeping || (fs == F_TAG);
-    wire [IDX-1:0] tg_wa  = sweeping ? sw : s1_set;
-    wire [TB:0] tg_wd  = sweeping ? {(TB+1){1'b0}} : {1'b1, s1_tag};
+    wire        ln_wr  = ln_pend && !sweeping && (fs != F_TAG);
+    wire        tg_we0 = sweeping || (fs == F_TAG) || ln_wr;
+    wire [IDX-1:0] tg_wa  = sweeping ? sw : (fs == F_TAG) ? s1_set : ln_set;
+    wire [TB:0] tg_wd  = (sweeping || fs != F_TAG) ? {(TB+1){1'b0}} : {!fill_poison, s1_tag};
+    assign wb_idle = (wb_cnt == 0) && (ds == 0) && !(s1_valid && s1_we);
     always @(posedge clk) begin
         if (d0_we) d0[d_wa] <= d_wd;
         if (tg_we0) begin tA0[tg_wa] <= tg_wd; tB0[tg_wa] <= tg_wd; end
@@ -83,7 +89,7 @@ module cache_dm #(parameter WR = 1, parameter WBD = 4, parameter IDX = 8, parame
     always @(posedge clk) begin
         m_req <= m_req & ~m_accept;
         if (rst) begin
-            s1_valid <= 0; s1_ok <= 0; fs <= F_NORMAL; ds <= 0; ds_acc <= 0; wb_cnt <= 0; wb_rp <= 0; wb_wp <= 0; inv_pend <= 1; sweeping <= 0; sw <= 0; m_req <= 0; m_we <= 0;
+            s1_valid <= 0; s1_ok <= 0; fs <= F_NORMAL; ds <= 0; ds_acc <= 0; wb_cnt <= 0; wb_rp <= 0; wb_wp <= 0; inv_pend <= 1; sweeping <= 0; sw <= 0; m_req <= 0; m_we <= 0; ln_pend <= 0; fill_poison <= 0;
             st_rd_hit <= 0; st_rd_miss <= 0; st_wr <= 0; st_wr_hit <= 0; fk <= 0;
         end else begin
             // ---- stage 1
@@ -106,10 +112,14 @@ module cache_dm #(parameter WR = 1, parameter WBD = 4, parameter IDX = 8, parame
                 end
                 F_TAG: begin
                     fs <= F_NORMAL; s1_ok <= 0;   // one wait clock: re-read s1_addr
+                    fill_poison <= 1'b0;
                 end
                 default: fs <= F_NORMAL;
             endcase
             if (fs == F_NORMAL && s1_valid && !s1_ok && !rd_miss && !wr_done) s1_ok <= 1;   // data re-read
+            // REV56: one-line invalidation (written on a clock without a fill tag write or sweep; a fill in progress is poisoned)
+            if (inv_ln) begin ln_pend <= 1'b1; ln_set <= inv_set; if (fs != F_NORMAL) fill_poison <= 1'b1; end
+            else if (ln_wr) begin ln_pend <= 1'b0; s1_ok <= 1'b0; end
             // invalidation: 128-clock sweep clearing the valid bit (cache unavailable during the sweep)
             if (inv) inv_pend <= 1;
             if (!sweeping && inv_pend && fs == F_NORMAL && !rd_miss) begin sweeping <= 1; sw <= 0; if (!inv) inv_pend <= 0; end

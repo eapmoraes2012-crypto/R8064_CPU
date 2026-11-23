@@ -67,11 +67,23 @@ module tb_soc_mon;
         // 2. HELLO
         req(8'h01, 8'h06); msg[2] = 8'h01; send(3); waitdone(4000);
         chk("HELLO len", rlen, 14); chk("HELLO op", rsp[0], 8'h81); chk("HELLO 'R'", rsp[3], 8'h52); chk("HELLO '4'", rsp[7], 8'h34); chk("HELLO ver", rsp[8], 1);
-        chk("HELLO msgmax", {rsp[10], rsp[9]}, 16'h0800); chk("HELLO block", {rsp[12], rsp[11]}, 16'h4000); chk("HELLO rec", rsp[13], 8'h07);
+        chk("HELLO msgmax", {rsp[10], rsp[9]}, 16'h0800); chk("HELLO block", {rsp[12], rsp[11]}, 16'h4000); `ifdef R8064_NO_DMA chk("HELLO rec (no window)", rsp[13], 8'h06); `else chk("HELLO rec", rsp[13], 8'h07); `endif
         $display("HELLO ok");
         // 3. unknown OP
         req(8'h55, 8'h07); send(2); waitdone(4000);
         chk("op desc st", rsp[2], 8'h01); chk("op desc seq", rsp[1], 8'h07);
+`ifdef R8064_NO_DMA
+        // 4/5. without the DMA the window buffer is not reachable: WIN_PUT / WIN_GET answer ST 04; the data for the CRC test comes by POKE
+        req(8'h10, 8'h08); put32(2, 32'h0001_0000); msg[6] = 0; msg[7] = 8'h10; send(8); waitdone(60000);
+        chk("PUT st (no DMA)", rsp[2], 8'h04);
+        req(8'h11, 8'h09); put32(2, 32'h0001_0400); msg[6] = 8'h00; msg[7] = 8'h04; send(8); waitdone(60000);
+        chk("GET st (no DMA)", rsp[2], 8'h04);
+        req(8'h12, 8'h10); put32(2, 32'h0001_0000); for (k = 0; k < 2040; k = k + 1) msg[6 + k] = pat(k); send(2046); waitdone(400000);
+        chk("POKE 2040 st", rsp[2], 0);
+        n = 0; for (k = 0; k < 2040; k = k + 1) if (sdb(32'h10000 + k) !== pat(k)) n = n + 1;
+        chk("POKE 2040 data in SDRAM (wrong bytes)", n, 0);
+        $display("WIN_PUT/WIN_GET refused, POKE 2040 ok");
+`else
         // 4. WIN_PUT -> 10000h (psz = 4096 by default; +big = full 16 KB block)
         psz = 4096; if ($test$plusargs("big")) psz = 16384;
         for (k = 0; k < 16384; k = k + 1) sbw(k[13:0], pat(k));
@@ -88,6 +100,7 @@ module tb_soc_mon;
         n = 0; for (k = 0; k < 1024; k = k + 1) begin sbr(k[13:0], t8); if (t8 !== pat(1024 + k)) n = n + 1; end
         chk("GET window (wrong bytes)", n, 0);
         $display("WIN_GET ok");
+`endif
         // 6. unaligned POKE at 20003h (5 bytes) + PEEK of 20000h (16 bytes)
         req(8'h12, 8'h0A); put32(2, 32'h0002_0003); for (k = 0; k < 5; k = k + 1) msg[6 + k] = 8'hA0 + k; send(11); waitdone(60000);
         chk("POKE st", rsp[2], 0); chk("POKE len", rlen, 3);
@@ -106,8 +119,13 @@ module tb_soc_mon;
         chk("misaligned st", rsp[2], 8'h03);
         // 9. EXEC: program at 4000h (via WIN_PUT): LD A,77h; LD (5000h),A; LD HL,0ABCDh; RET
         msg[0] = 8'h3E; msg[1] = 8'h77; msg[2] = 8'h32; msg[3] = 8'h00; msg[4] = 8'h50; msg[5] = 8'h21; msg[6] = 8'hCD; msg[7] = 8'hAB; msg[8] = 8'hC9;
+`ifdef R8064_NO_DMA
+        for (k = 8; k >= 0; k = k - 1) msg[6 + k] = msg[k];
+        req(8'h12, 8'h0E); put32(2, 32'h0000_4000); send(15); waitdone(60000);
+`else
         for (k = 0; k < 16; k = k + 1) sbw(k[13:0], k < 9 ? msg[k] : 8'h00);
         req(8'h10, 8'h0E); put32(2, 32'h0000_4000); msg[6] = 16; msg[7] = 0; send(8); waitdone(60000);
+`endif
         chk("PUT prog st", rsp[2], 0);
         req(8'h20, 8'h0F); for (k = 2; k < 19; k = k + 1) msg[k] = 0; msg[2] = 8'h00; msg[3] = 8'h40; send(19); waitdone(60000);
         chk("EXEC resp op", rsp[0], 8'hA0); chk("EXEC resp st", rsp[2], 0);
@@ -116,6 +134,27 @@ module tb_soc_mon;
         chk("EVT output", {rsp[4], rsp[3]}, 16'hABCD);
         chk("program wrote 5000h", sdb(32'h5000), 8'h77);
         $display("EXEC ok");
+        // 10. the same address loaded again with another program (LD HL,1234h; RET) and run: the I cache must not keep the old code
+        req(8'h12, 8'h11); put32(2, 32'h0000_4000); msg[6] = 8'h21; msg[7] = 8'h34; msg[8] = 8'h12; msg[9] = 8'hC9; send(10); waitdone(60000);
+        chk("POKE prog 2 st", rsp[2], 0);
+        req(8'h20, 8'h12); for (k = 2; k < 19; k = k + 1) msg[k] = 0; msg[3] = 8'h40; send(19); waitdone(60000);
+        chk("EXEC 2 st", rsp[2], 0);
+        waitdone(60000);
+        chk("EVT 2 output (new code)", {rsp[4], rsp[3]}, 16'h1234);
+        $display("EXEC of reloaded code ok");
+        // 11. self-modifying Z80 code (EXEC mode 01, Z80 in DRAM): a loop patches the operand of an instruction it has already run, then
+        //     the code patches the instruction right after the store. Expected HL = 1 + 2 + 4 + 8 + 20h = 2Fh (stale code would give 24h or less)
+        req(8'h12, 8'h13); put32(2, 32'h0000_4000);
+        msg[6]  = 8'h21; msg[7]  = 8'h00; msg[8]  = 8'h00; msg[9]  = 8'h06; msg[10] = 8'h04; msg[11] = 8'h11; msg[12] = 8'h01; msg[13] = 8'h00;
+        msg[14] = 8'h19; msg[15] = 8'h3A; msg[16] = 8'h06; msg[17] = 8'h40; msg[18] = 8'h87; msg[19] = 8'h32; msg[20] = 8'h06; msg[21] = 8'h40;
+        msg[22] = 8'h10; msg[23] = 8'hF3; msg[24] = 8'h3E; msg[25] = 8'h20; msg[26] = 8'h32; msg[27] = 8'h18; msg[28] = 8'h40; msg[29] = 8'h11;
+        msg[30] = 8'h00; msg[31] = 8'h00; msg[32] = 8'h19; msg[33] = 8'hC9; send(34); waitdone(60000);
+        chk("POKE smc st", rsp[2], 0);
+        req(8'h20, 8'h14); for (k = 2; k < 19; k = k + 1) msg[k] = 0; msg[3] = 8'h40; msg[10] = 8'h01; send(19); waitdone(60000);
+        chk("EXEC smc st", rsp[2], 0);
+        waitdone(200000);
+        chk("EVT smc output (self-modifying code)", {rsp[4], rsp[3]}, 16'h002F);
+        $display("self-modifying Z80 code ok");
         $display("pc=%h", dbg_pc);
         if (errs == 0) $display("RESULT: MONITOR OK"); else $display("RESULT: %0d ERRORS", errs);
         $finish;

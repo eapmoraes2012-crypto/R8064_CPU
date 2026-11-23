@@ -256,7 +256,9 @@ module r8064_core_min #(
     // (prefetched bytes, stage A, B, predicted targets) is discarded and the fetch restarts at the next instruction (npc)
     always @(posedge clk) begin
         if (rst || flush) serf_q <= 1'b0;
-        else if (issue && ((u[10] && iD_q[5]) || u[77] || u[102] || u[105]) && (u[76:74] == 3'd0)) serf_q <= 1'b1;   // (EI/DI/RETN/IM do not affect the fetch)
+        else if (issue && ((((u[10] && iD_q[5]) || u[77] || u[102] || u[105]) && (u[76:74] == 3'd0)) || (gov_wait && u[9]))) serf_q <= 1'b1;   // (EI/DI/RETN/IM do not affect the fetch)
+        // REV56: in the governed modes (Z80/R800) every memory store also refetches the next instructions (self-modifying code; the memory
+        // system invalidates the I-cache line of the store before the refetch). The Z80/R800 time of a store covers the refetch.
     end
     assign serf_fl = serf_q && !seq && pipe_empty_q && !issue_q && !flush_q && !ex_act;
     // ---- REV51: branch prediction in stage A (static) with verification in X2
