@@ -21,7 +21,7 @@ module cache_dm #(parameter WR = 1, parameter WBD = 4, parameter IDX = 8, parame
     input  wire [63:0] m_rdata,
     output reg  [31:0] st_rd_hit, st_rd_miss, st_wr, st_wr_hit,
     // REV56: invalidation of ONE line (inv_ln pulse, set inv_set; I cache, self-modifying code) and 'write buffer empty' (D cache)
-    input  wire        inv_ln, input wire [IDX-1:0] inv_set,
+    input  wire        inv_ln, input wire [IDX-1:0] inv_set, input wire [17-IDX:0] inv_tag,
     output wire        wb_idle
 );
     // ---------------- arrays
@@ -29,6 +29,8 @@ module cache_dm #(parameter WR = 1, parameter WBD = 4, parameter IDX = 8, parame
     reg [63:0] d0 [0:(1<<(IDX+2))-1];
     // tags with valid bit (bit 10), in 2 copies (A: read with the new address, B: read with that of stage 1) so there is no mux dependent on 'accept'
     reg [TB:0] tA0 [0:(1<<IDX)-1]; reg [TB:0] tB0 [0:(1<<IDX)-1];
+    reg [TB:0] tC0 [0:(1<<IDX)-1];   // REV56: third copy, read with the set of a one-line invalidation (only a line holding that tag is invalidated)
+    reg [TB-1:0] ln_tag;
     reg inv_pend, sweeping; reg [IDX-1:0] sw;
     reg ln_pend, fill_poison; reg [IDX-1:0] ln_set;   // REV56: one-line invalidation pending; a fill in progress during it ends invalid
     // stage 1
@@ -76,14 +78,17 @@ module cache_dm #(parameter WR = 1, parameter WBD = 4, parameter IDX = 8, parame
     wire        d0_we = wr_hit_upd || fill_wr;
     wire [IDX+1:0] d_wa = fill_wr ? {s1_set, fk} : s1_addr[IDX+1:0];
     wire [63:0] d_wd = fill_wr ? m_rdata : mrg;
-    wire        ln_wr  = ln_pend && !sweeping && (fs != F_TAG);
+    wire [TB:0] t0_c = tC0[ln_set];
+    wire        ln_hit = t0_c[TB] && (t0_c[TB-1:0] == ln_tag);
+    wire        ln_wr  = ln_pend && !sweeping && (fs != F_TAG) && ln_hit;
+    wire        ln_done = ln_pend && !sweeping && (fs != F_TAG);
     wire        tg_we0 = sweeping || (fs == F_TAG) || ln_wr;
     wire [IDX-1:0] tg_wa  = sweeping ? sw : (fs == F_TAG) ? s1_set : ln_set;
     wire [TB:0] tg_wd  = (sweeping || fs != F_TAG) ? {(TB+1){1'b0}} : {!fill_poison, s1_tag};
     assign wb_idle = (wb_cnt == 0) && (ds == 0) && !(s1_valid && s1_we);
     always @(posedge clk) begin
         if (d0_we) d0[d_wa] <= d_wd;
-        if (tg_we0) begin tA0[tg_wa] <= tg_wd; tB0[tg_wa] <= tg_wd; end
+        if (tg_we0) begin tA0[tg_wa] <= tg_wd; tB0[tg_wa] <= tg_wd; tC0[tg_wa] <= tg_wd; end
     end
     integer i;
     always @(posedge clk) begin
@@ -118,8 +123,8 @@ module cache_dm #(parameter WR = 1, parameter WBD = 4, parameter IDX = 8, parame
             endcase
             if (fs == F_NORMAL && s1_valid && !s1_ok && !rd_miss && !wr_done) s1_ok <= 1;   // data re-read
             // REV56: one-line invalidation (written on a clock without a fill tag write or sweep; a fill in progress is poisoned)
-            if (inv_ln) begin ln_pend <= 1'b1; ln_set <= inv_set; if (fs != F_NORMAL) fill_poison <= 1'b1; end
-            else if (ln_wr) begin ln_pend <= 1'b0; s1_ok <= 1'b0; end
+            if (inv_ln) begin ln_pend <= 1'b1; ln_set <= inv_set; ln_tag <= inv_tag; if (fs != F_NORMAL) fill_poison <= 1'b1; end
+            else if (ln_done) begin ln_pend <= 1'b0; if (ln_hit) s1_ok <= 1'b0; end
             // invalidation: 128-clock sweep clearing the valid bit (cache unavailable during the sweep)
             if (inv) inv_pend <= 1;
             if (!sweeping && inv_pend && fs == F_NORMAL && !rd_miss) begin sweeping <= 1; sw <= 0; if (!inv) inv_pend <= 0; end
