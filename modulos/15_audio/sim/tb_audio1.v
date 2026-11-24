@@ -8,7 +8,9 @@ module tb_audio1;
     r8064_audio dut(.clk(clk), .rst(rst), .io_we(io_we), .io_re(io_re), .io_a(io_a), .io_wd(io_wd), .io_hit(io_hit), .io_rd(io_rd),
         .m_we(m_we), .m_re(m_re), .m_a(m_a), .m_wd(m_wd), .m_ss(m_ss), .m_hit(m_hit), .m_rd(m_rd),
         .r_io_we(1'b0), .r_io_re(1'b0), .r_io_a(8'd0), .r_io_wd(8'd0), .r_m_we(1'b0), .r_m_re(1'b0), .r_m_a(16'd0), .r_m_wd(8'd0), .r_ss(2'd0),
-        .r_ack(r_ack), .r_rd(r_rd), .i2s_bck(bck), .i2s_lrck(lrck), .i2s_data(sd), .opl_clk(oclk));
+        .r_ack(r_ack), .r_rd(r_rd), .i2s_bck(bck), .i2s_lrck(lrck), .i2s_data(sd), .opl_clk(oclk),
+        .o1_sy(1'b0), .o1_doab(1'b0), .o1_docd(1'b0), .o1_smpac(1'b0), .o1_smpbd(1'b0), .o2_sy(1'b0), .o2_doab(1'b0), .o2_docd(1'b0), .o2_smpac(1'b0), .o2_smpbd(1'b0),
+        .am_ack(1'b0), .am_rd(8'h00));
     integer errs = 0, k, f;
     task iow(input [7:0] a, input [7:0] d); begin @(negedge clk); io_a = a; io_wd = d; io_we = 1; @(negedge clk); io_we = 0; repeat (4) @(negedge clk); end endtask
     task ior(input [7:0] a, output [7:0] d); begin @(negedge clk); io_a = a; io_re = 1; #1 d = io_rd; @(negedge clk); io_re = 0; repeat (4) @(negedge clk); end endtask
