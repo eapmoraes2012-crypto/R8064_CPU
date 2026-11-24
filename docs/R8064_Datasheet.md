@@ -1,6 +1,6 @@
 # R8064 — 64-bit CPU for the MSX — Datasheet
 
-> **Edition 1.0, architecture and interfaces · November 23, 2026 · Edison · design revision REV54**
+> **Edition 1.1, architecture and interfaces · November 23, 2026 · Edison · design revision REV56 (REV54 tested on the board)**
 >
 > This edition is final for the architecture, programming model, memory, interfaces, exceptions, FPGA implementation and system-software chapters. Instruction timing is **not** part of it. That covers section 6.2 and Appendices B to D. It will be issued as a separate timing edition after the REV55 hardware run. Appendix C (complete instruction list) and Appendix D (measured timing) are generated from the sources by `modulos/13_soc/sim/meas/gen_doc_tables.py`.
 
@@ -71,6 +71,7 @@ flowchart TB
 - **Decoder, stage B:** holds the complete decoded candidate (register indices, interlocks) and issues it.
 - **Execution:** each instruction runs as one or more micro-operations from the micro-operation ROM (107 bits wide). The pipeline stages are XR (register read) → X1 → X2 (ALU, branch resolution) → X3 → M (memory, multiplier, divider, FPU) → W (write-back). Results are forwarded from M and W, and a load-use interlock covers the remaining cases.
 - **Serializing instructions:** instructions that change state read at decode time wait for an empty pipeline. These are CR writes, I/O, EI/DI/RETN/IM, privileged instructions and EXX/EX AF. Instructions that write CRs (except EI/DI/RETN/IM) or are privileged also refetch the instructions that follow them.
+- **Stores in the governed modes:** a store holds the next instruction until it has left the pipeline, and the front end is refetched when the stored line was in the I cache (self-modifying code, section 7).
 - **Register file:** 64 entries of 64 bits with three read ports and one write port (section 4.1).
 - **Multiplier and divider:** the multiplier uses DSP blocks; the divider is iterative, one bit per clock.
 - **Memory order:** the core keeps program order for memory. Writes are posted to the data cache's 4-entry write buffer, which has the highest priority in the memory arbiter. FENCE and ISYNC are accepted and execute as NOPs in REV54.
@@ -401,9 +402,15 @@ Native-mode instruction timing is in the timing edition of this datasheet (Appen
 
 **Cache miss.** A miss fills the 32-byte line with four 64-bit SDRAM reads and repeats the access. A data write never allocates a line; it goes to the write buffer and then to the SDRAM.
 
-**Cache coherence.** The I cache and the prefetch queue do not see stores. Code that the program writes is fetched correctly only if its line is not already in the I cache. After writing code over a region that may have run before, write CR17 bit 2: this invalidates both caches, and the CR write also refetches the instructions that follow. Neither cache sees writes by the DMA; the DMA invalidates both caches when it completes (section 7.6).
+**Cache coherence.** The I cache and the prefetch queue do not see stores by themselves. In the **governed modes** (Z80, R800) the hardware keeps them coherent, so MSX self-modifying code works (REV56):
 
-**Self-modifying Z80 code.** In the governed modes this has a consequence for MSX software. A program that changes an instruction it has already executed (for example, an operand patched inside a loop) can run the old bytes while the line stays in the I cache. Software written for the R8064 must use the CR17 invalidation above.
+- every store holds the next instruction until the store has left the pipeline;
+- the memory system looks up the stored line in the I cache; if the line is there (or being filled), it is invalidated as soon as the write buffer has written it to the SDRAM, and the core refetches the instructions after the store;
+- fetches of that line wait for the invalidation; other lines are fetched normally.
+
+The Z80 or R800 time of a store covers this work: the Z80 Dhrystone program still takes exactly 267,319 T × 8 clocks.
+
+In **native mode** there is no automatic coherence. After writing code over a region that may have run before, write CR17 bit 2: this invalidates both caches, and the CR write also refetches the instructions that follow. Neither cache sees writes by the DMA; the DMA invalidates both caches when it completes (section 7.6).
 
 ### 7.1 Physical memory map
 
@@ -669,7 +676,7 @@ On START the hardware sets BUSY = 1, DONE = 0 and WINDOW = 0 in the same cycle, 
 | OP | Name | Parameters | Reply data |
 | --- | --- | --- | --- |
 | 00h | PING | — | — |
-| 01h | HELLO | host version (1) | "R8064" (5), protocol version (1), maximum message size (2 = 2048), window block size (2 = 16384), features (1: b0 window, b1 EXEC, b2 CRC) |
+| 01h | HELLO | host version (1) | "R8064" (5), protocol version (1), maximum message size (2 = 2048), window block size (2 = 16384), features (1: b0 window, only with the DMA; b1 EXEC; b2 CRC) |
 | 02h | RESET | — | — (clears the protocol state and gives the window back to the MSX; does not stop a running program) |
 | 10h | WIN\_PUT | physical destination (4), size (2; 0 = 16384) | block CRC-16 (2); copies the window to SDRAM |
 | 11h | WIN\_GET | physical source (4), size (2; 0 = 16384) | block CRC-16 (2); copies SDRAM to the window |
@@ -701,7 +708,7 @@ The CRC-16 is CCITT-FALSE (polynomial 1021h, initial value FFFFh). Addresses are
 | 01 | unknown command |
 | 02 | invalid parameter |
 | 03 | address misaligned or outside SDRAM |
-| 04 | DMA error (or the DMA is not present) |
+| 04 | DMA error, or a window operation (WIN\_PUT, WIN\_GET) without the DMA |
 | 05 | reserved |
 
 **Sequences.**
@@ -771,7 +778,7 @@ In user mode every I/O instruction is privileged (cause 7).
 | Board benchmarks | `modulos/13_soc/bench/bm/` | Dhrystone 2.1, Sieve and software floating point in native and Z80 modes on a bare Tang Nano 20K |
 | FPU board test | `modulos/13_soc/bench/fpu/` | 60 FPU cases with results and clocks checked against the RTL |
 
-**Monitor and the DMA.** The monitor copies data between the message buffer and physical memory with DMA channel 0. This applies to POKE, PEEK, CRC, WIN\_PUT and WIN\_GET. The REV54 cartridge build has no DMA (`R8064_NO_DMA`), so these commands do not work with the current monitor: the DMA status never reports completion. PING, HELLO and RESET work. Before the cartridge is used with R8064.COM, the monitor must copy without the DMA, or the build must keep DMA channel 0 (chapter 11).
+**Monitor and the DMA.** At start the monitor checks whether the DMA exists (the IE port EFh keeps bit 0 only with the DMA). With the DMA it copies between the message buffer and physical memory with channel 0. Without it (the Tang Nano 20K builds, `R8064_NO_DMA`), POKE, PEEK and CRC copy with the CPU: native-mode 64-bit loads and stores with 32-bit physical addresses, followed by an invalidation of both caches. The 16 KB window is reachable only by the DMA, so without it WIN\_PUT and WIN\_GET answer ST = 04 and HELLO reports no window (features = 06h).
 
 ## 9. Interrupts and exceptions
 
@@ -876,6 +883,7 @@ At the 28.636 MHz cartridge clock, native performance scales by 1.06. REV54 runs
 - Core regressions: Z80 reference programs, 100 random free-running Z80 programs, the R8064 extensions against a Python model (`sim_r64`, including the 33 FPU instructions), privilege and exceptions.
 - FPU arithmetic core: 117,000 vectors against the exact model `fpref.py`, with 0 errors.
 - SoC: exceptions 1–14, MMU 64-bit and 8 MB, SoC + DMA, the DMA window, the native mapper and MegaRAM, and the slot interface. The cartridge top with the real monitor answers PING and HELLO and handles INT and /RESET.
+- Monitor in the SoC, with and without the DMA: PING, HELLO, POKE/PEEK, CRC, EXEC, the same address reloaded and run again, and a self-modifying Z80 program (a loop that patches an instruction it has already run, and a patch of the next instruction).
 - MSX software:
   - R8064.COM: 17 cases against the cartridge model;
   - R8064AS: 1,527 Z80 forms against sjasmplus, every R8064 extension against the decode ROMs, and 15,975 lines cross-checked between the MSX program and the PC assembler.
@@ -901,11 +909,8 @@ The board bring-up also exercised the PLL, the embedded SDRAM, the boot from the
 
 **Open items.**
 
-- **Cartridge on the MSX:** Gowin run of the REV54/REV55 cartridge, then the test on the MSX (slot I/O, monitor, R8064.COM, R8064AS).
-- **Monitor without the DMA:** the monitor needs the DMA for POKE, PEEK, CRC, WIN\_PUT and WIN\_GET (section 8.5).
-- **SoC interrupt input:** `r8064_soc` gives the core `irq & ~dma_irq`. With the full DMA, a DMA interrupt would block the external interrupt instead of being added to it. This has no effect in the Tang builds, where both are 0.
-- **REV55:** same-clock data-cache access with the MMU off. It is a timing change only; the hardware run is pending (timing edition).
-- **Self-modifying code:** the I cache is not coherent with data writes (section 7). Z80 software that patches code it has already run may need a coherence mechanism in a later revision.
+- **Cartridge on the MSX:** Gowin run of the REV56 cartridge, then the test on the MSX (slot I/O, monitor, R8064.COM, R8064AS).
+- **REV55 and REV56:** same-clock data-cache access (timing), the monitor without the DMA, coherent self-modifying code in the governed modes and the SoC INT fix. All pass in simulation; the hardware run is pending.
 - **Not characterized on the board:** governed-mode timing on a real MSX, cache-miss timing, the MMU and the full DMA.
 - **FPU:** a programmable control word; the exact x87 remainder (FPREM); the x87 special cases of the logarithm.
 - **Multitasking:** an end-to-end task-switch test (chapter 15).
@@ -988,8 +993,10 @@ The card is powered from the slot +5 V (up to 300 mA per slot; the card's consum
 | REV53 | 2026-11-22 | FPU back in the cartridge at 28.636 MHz (CPT 8); bench at 27 MHz; SDRAM phase 14 at CPT 8 |
 | REV53c | 2026-11-22 | FPU build without the DMA and with ROM_B page 32 as logic; bench, benchmarks and FPU test pass on the board |
 | REV54 | 2026-11-23 | FPU multiplication 16 bits per step on DSP blocks; faster instruction fetch; bench 256/256 and FPU 60/60 on the board |
-| REV55 | 2026-11-23 | same-clock data-cache access with the MMU off (timing only; hardware run pending) |
-| Datasheet 1.0 | 2026-11-23 | this edition: architecture and interfaces final for REV54 |
+| REV55 | 2026-11-23 | same-clock data-cache access with the MMU off (timing only) |
+| REV56 | 2026-11-23 | monitor without the DMA (CPU copy); coherent self-modifying code in the governed modes; core INT = irq OR DMA interrupt |
+| Datasheet 1.0 | 2026-11-23 | architecture and interfaces final for REV54 |
+| Datasheet 1.1 | 2026-11-23 | this edition: REV56 corrections (monitor, self-modifying code, INT) |
 
 The detailed notes of each revision are in `modulos/13_soc/resultado_soc.txt` and in the README.
 
