@@ -24,7 +24,8 @@ module r8064_msx_sys #(parameter ROM_FILE = "gov_rom.mem", parameter FIFO_BASE =
     input  wire        fm_we, fm_re, input wire [1:0] fm_a, input wire [7:0] fm_wd, output wire [7:0] fm_rd,
     output wire        fifo_irq, fifo_rst,
     output wire        native64, clk_sel, is_z80, is_rom, mode_busy,
-    output wire [63:0] dbg_pc, output wire [7:0] dbg_f, output wire dbg_sig, output wire gov_cv
+    output wire [63:0] dbg_pc, output wire [7:0] dbg_f, output wire dbg_sig, output wire gov_cv,
+    input  wire        smc_miss, output wire smc_done   // REV56 (see r8064_core_min)
 );
     wire i_ack_c = i_ack;
     wire [63:0] i_addr, d_addr; wire [7:0] a8, md_rd, mi_rd; wire md_oe, mi_hit_io, md_hit_io;
@@ -42,7 +43,7 @@ module r8064_msx_sys #(parameter ROM_FILE = "gov_rom.mem", parameter FIFO_BASE =
     wire [7:0] d_be_c; wire d_wblk;   // d_be_c = core byte-enable; d_be goes to zero when the write falls in the MegaRAM in ASCII8 mode (read-only)
     wire [2:0] lane_d = d_be_c[0] ? 3'd0 : d_be_c[1] ? 3'd1 : d_be_c[2] ? 3'd2 : d_be_c[3] ? 3'd3 : d_be_c[4] ? 3'd4 : d_be_c[5] ? 3'd5 : d_be_c[6] ? 3'd6 : 3'd7;
     wire [7:0] lane_wd = d_wdata >> {lane_d, 3'b000};
-    r8064_cpu_gov #(.ROM_FILE(ROM_FILE), .CPT(CPT)) u_cpu(.clk(clk), .rst(rst), .irq(irq), .i_req(i_req), .i_ack(i_ack_c), .i_addr(i_addr), .i_rdata(i_rdata),
+    r8064_cpu_gov #(.ROM_FILE(ROM_FILE), .CPT(CPT)) u_cpu(.clk(clk), .rst(rst), .irq(irq), .smc_miss(smc_miss), .smc_done(smc_done), .i_req(i_req), .i_ack(i_ack_c), .i_addr(i_addr), .i_rdata(i_rdata),
         .d_req(d_req), .d_we(d_we), .d_addr(d_addr), .d_size(d_size), .d_wdata(d_wdata), .d_be(d_be_c), .d_ack(d_ack), .d_rdata(d_rdata),
         .i_flt(i_flt), .d_flt(d_flt), .i_cs(i_cs), .d_cs(d_cs), .cr_mmu_en(cr_mmu_en), .cr_mmu_user(cr_mmu_user), .cr_asid(cr_asid), .cr_root(cr_root),
         .cr_fl_all(cr_fl_all), .cr_fl_va_en(cr_fl_va_en), .cr_fl_asid_en(cr_fl_asid_en), .cr_fl_va(cr_fl_va), .cr_fl_asid(cr_fl_asid), .cr_cinv(cr_cinv),

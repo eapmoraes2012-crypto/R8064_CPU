@@ -37,6 +37,8 @@ module r8064_core_min #(
     // timing governor (Z80/R800 modes): gov_go holds the issue; gov_* describe the candidate instruction
     input  wire        gov_go,
     input  wire        gov_wait,        // 1 = governed modes (Z80/R800): an extra decode phase for the timing table
+    input  wire        smc_miss,        // REV56: the stores since the last smc_done hit no I-cache line (the refetch after them can be skipped)
+    output wire        smc_done,        // REV56: the refetch decision after a store was taken (memory system: restart the smc_miss accumulation)
     input  wire [7:0]  port_c,          // register C (port of the IN r,(C) / OUT (C),r forms), supplied by the wrapper
     output wire [2:0]  gov_page,
     output wire [7:0]  gov_op,
@@ -77,7 +79,7 @@ module r8064_core_min #(
     wire ex_take, ex_take_d; reg ex_act; reg [1:0] exk; reg ex_isd, ex_we; reg [2:0] ex_cs;
     wire br_fl;
     wire redir; wire [5:0] r_pend; wire [63:0] p_tgt;   // REV51: predicted branch in stage A (defined with stage A)
-    reg  serf_q; wire serf_fl;   // REV51: CR write / privileged instruction drained: refetch from the next instruction (translation, mode, ...)
+    reg  serf_q, serf_st; wire serf_fl, serf_skip;   // REV51: CR write / privileged instruction drained: refetch from the next instruction (translation, mode, ...)
     wire flush_raw = br_fl | (irq_take & ~irq_new) | ex_take | serf_fl;
     reg  flush_q; reg [63:0] flush_tgt_q;
     wire flush = flush_q;
@@ -255,12 +257,17 @@ module r8064_core_min #(
     // serf_q: the instruction may change how the next ones are fetched (MMU, privilege, mode): when it has left the pipeline, the front end
     // (prefetched bytes, stage A, B, predicted targets) is discarded and the fetch restarts at the next instruction (npc)
     always @(posedge clk) begin
-        if (rst || flush) serf_q <= 1'b0;
-        else if (issue && ((((u[10] && iD_q[5]) || u[77] || u[102] || u[105]) && (u[76:74] == 3'd0)) || (gov_wait && u[9]))) serf_q <= 1'b1;   // (EI/DI/RETN/IM do not affect the fetch)
-        // REV56: in the governed modes (Z80/R800) every memory store also refetches the next instructions (self-modifying code; the memory
-        // system invalidates the I-cache line of the store before the refetch). The Z80/R800 time of a store covers the refetch.
+        if (rst || flush || serf_skip) begin serf_q <= 1'b0; serf_st <= 1'b0; end
+        else if (issue && ((u[10] && iD_q[5]) || u[77] || u[102] || u[105]) && (u[76:74] == 3'd0)) begin serf_q <= 1'b1; serf_st <= 1'b0; end   // (EI/DI/RETN/IM do not affect the fetch)
+        else if (issue && gov_wait && u[9]) begin serf_q <= 1'b1; if (!serf_q) serf_st <= 1'b1; end
+        // REV56: in the governed modes (Z80/R800) a memory store also holds the next instruction until it has left the pipeline; then, if the
+        // store's line was in the I cache (or being filled), the front end is refetched (self-modifying code: the memory system invalidates that
+        // line before the refetch); otherwise the bytes already fetched are kept. The Z80/R800 time of a store covers the wait.
     end
-    assign serf_fl = serf_q && !seq && pipe_empty_q && !issue_q && !flush_q && !ex_act;
+    wire serf_rdy = serf_q && !seq && pipe_empty_q && !issue_q && !flush_q && !ex_act;
+    assign serf_skip = serf_rdy && serf_st && (smc_miss == 1'b1);
+    assign serf_fl = serf_rdy && !serf_skip;
+    assign smc_done = serf_rdy && serf_st;
     // ---- REV51: branch prediction in stage A (static) with verification in X2
     // Unprefixed Z80 opcodes, once A's bytes are complete: JP nn (C3), JR e (18), CALL nn (CD) always; RET (C9) from a 4-entry return stack;
     // JR cc,e / DJNZ e backward (e < 0) and JP cc,nn backward (nn <= PC) predicted taken. The fetch restarts at the predicted target at once

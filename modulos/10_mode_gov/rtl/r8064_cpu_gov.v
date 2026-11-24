@@ -14,7 +14,8 @@ module r8064_cpu_gov #(parameter ROM_FILE = "gov_rom.mem", parameter CPT = 16)( 
     input  wire [7:0]  a8,                       // primary slot (PPI A8H) coming from the MSX memory system
     input  wire        map_we, input wire [3:0] map_idx, input wire [1:0] map_val,   // region table (0 RAM, 1 ROM, 2 external)
     output wire        native64, clk_sel, is_z80, is_rom, mode_busy,
-    output wire [63:0] dbg_pc, output wire [7:0] dbg_f, output wire dbg_sig, output wire gov_cv
+    output wire [63:0] dbg_pc, output wire [7:0] dbg_f, output wire dbg_sig, output wire gov_cv,
+    input  wire        smc_miss, output wire smc_done   // REV56 (see r8064_core_min)
 );
     wire go, alt_ev, bnd, ph, add_ev, d_ev, f_romw, dwe; wire [2:0] pg; wire [7:0] op, prt; wire [12:0] rem;
     wire [15:0] fpc, daddr; wire [3:0] flen, fx; wire [1:0] dsz; wire [4:0] add_n;
@@ -30,6 +31,6 @@ module r8064_cpu_gov #(parameter ROM_FILE = "gov_rom.mem", parameter CPT = 16)( 
         .i_flt(i_flt), .d_flt(d_flt), .i_cs(i_cs), .d_cs(d_cs), .cr_mmu_en(cr_mmu_en), .cr_mmu_user(cr_mmu_user), .cr_asid(cr_asid), .cr_root(cr_root),
         .cr_fl_all(cr_fl_all), .cr_fl_va_en(cr_fl_va_en), .cr_fl_asid_en(cr_fl_asid_en), .cr_fl_va(cr_fl_va), .cr_fl_asid(cr_fl_asid), .cr_cinv(cr_cinv),
         .dma_cr_we(dma_cr_we), .dma_cr_idx(dma_cr_idx), .dma_cr_wd(dma_cr_wd),
-        .dbg_pc(dbg_pc), .dbg_f(dbg_f), .dbg_sig(dbg_sig), .gov_go(go), .gov_wait(!native64), .port_c(port_c), .gov_page(pg), .gov_op(op), .gov_port(prt),
+        .dbg_pc(dbg_pc), .dbg_f(dbg_f), .dbg_sig(dbg_sig), .gov_go(go), .gov_wait(!native64), .smc_miss(smc_miss), .smc_done(smc_done), .port_c(port_c), .gov_page(pg), .gov_op(op), .gov_port(prt),
         .gov_cv(gov_cv), .gov_alt_ev(alt_ev), .gov_boundary(bnd), .gov_pc(fpc), .gov_len(flen), .gov_dev(d_ev), .gov_daddr(daddr), .gov_dsize(dsz), .gov_dwe(dwe), .io_we(cio_we), .io_re(cio_re), .io_a(cio_a), .io_wd(cio_wd), .io_rdata(cio_rd));
 endmodule

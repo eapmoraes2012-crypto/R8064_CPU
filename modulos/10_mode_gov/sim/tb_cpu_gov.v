@@ -5,7 +5,7 @@ module tb_cpu_gov;
     wire i_req, d_req, d_we; wire [63:0] i_addr, d_addr, d_wdata, dbg_pc; wire [1:0] d_size; wire [7:0] dbg_f, d_be; wire dbg_sig;
     reg i_ack = 0, d_ack = 0; reg [63:0] i_rdata = 0, d_rdata = 0; reg [63:0] mem [0:511];
     reg map_we = 0; reg [3:0] map_idx = 0; reg [1:0] map_val = 0; reg io_we = 0; reg [7:0] io_a = 0, io_wd = 0; wire [7:0] io_rd; wire io_oe; wire nat, csel, z80, rom, mbusy, cv;
-    r8064_cpu_gov dut(.i_flt(1'b0), .d_flt(1'b0), .i_cs(3'd0), .d_cs(3'd0), .clk(clk), .rst(rst), .irq(irq), .i_req(i_req), .i_ack(i_ack), .i_addr(i_addr), .i_rdata(i_rdata),
+    r8064_cpu_gov dut(.smc_miss(1'b0), .i_flt(1'b0), .d_flt(1'b0), .i_cs(3'd0), .d_cs(3'd0), .clk(clk), .rst(rst), .irq(irq), .i_req(i_req), .i_ack(i_ack), .i_addr(i_addr), .i_rdata(i_rdata),
         .d_req(d_req), .d_we(d_we), .d_addr(d_addr), .d_size(d_size), .d_wdata(d_wdata), .d_be(d_be), .d_ack(d_ack), .d_rdata(d_rdata),
         .io_we(io_we), .io_re(1'b0), .io_a(io_a), .io_wd(io_wd), .io_rd(io_rd), .io_oe(io_oe), .port_c(8'd0), .cio_we(), .cio_re(), .cio_a(), .cio_wd(), .cio_rd(8'hFF), .a8(8'd0), .map_we(map_we), .map_idx(map_idx), .map_val(map_val),
         .native64(nat), .clk_sel(csel), .is_z80(z80), .is_rom(rom), .mode_busy(mbusy), .dbg_pc(dbg_pc), .dbg_f(dbg_f), .dbg_sig(dbg_sig), .gov_cv(cv));

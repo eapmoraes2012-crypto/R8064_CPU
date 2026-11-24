@@ -7,6 +7,7 @@ module r8064_memsys #(parameter INIT_CYC = 20000, parameter REF_INT = 400)(
     input  wire        mmu_en, mmu_user, input wire [7:0] mmu_asid, input wire [19:0] mmu_root,
     input  wire        fl_all, fl_va_en, fl_asid_en, input wire [63:0] fl_va, input wire [7:0] fl_asid, output wire fl_busy_i, fl_busy_d,
     input  wire        cache_inv,
+    input  wire        smc_done, output reg smc_miss,   // REV56: core refetch decision / the stores since the last decision hit no I-cache line
     input  wire        smc_en,    // REV56: governed modes (Z80/R800): every core store invalidates its I-cache line before the next fetch (self-modifying code)
     // 5th SDRAM master (DMA, lowest priority): protocol req until acc, then wait for done (rdata valid on the done clock)
     input  wire        x_req, x_we, input wire [19:0] x_addr, input wire [63:0] x_wd, input wire [7:0] x_be, output wire x_acc, x_done, output wire [63:0] x_rd,
@@ -26,6 +27,7 @@ module r8064_memsys #(parameter INIT_CYC = 20000, parameter REF_INT = 400)(
     localparam S_IDLE = 2'd0, S_XL = 2'd1, S_CREQ = 2'd2, S_WAIT = 2'd3;
     // REV48: with the MMU off (en = 0 is a pure pass-through of the low 32 bits) the request skips the 2 translation clocks: IDLE -> CREQ directly
     reg smc_pend, smc_full, ic_inv_ln, ic_inv_all; reg [6:0] smc_set; reg [10:0] smc_tag; wire dc_wb_idle;
+    reg lk_v; reg [6:0] lk_set; reg [10:0] lk_tag; wire ic_lk_hit;   // REV56: I-cache lookup of the stored line, one clock after the store
     // REV56: while a store's I-line invalidation is pending, only fetches of THAT line wait (all fetches if two lines are pending); the
     // prefetch of other lines goes on, so the refetch after the store finds them in the cache as before
     wire smc_blk = (smc_pend && (smc_full || c_i_pa[22:5] == {smc_tag, smc_set})) || ic_inv_ln || ic_inv_all;
@@ -61,7 +63,7 @@ module r8064_memsys #(parameter INIT_CYC = 20000, parameter REF_INT = 400)(
         .fl_all(fl_all), .fl_va_en(fl_va_en), .fl_asid_en(fl_asid_en), .fl_va(fl_va), .fl_asid(fl_asid),
         .v_req(iv_req), .v_addr(c_i_pa), .v_acc(2'd2), .ready(iv_ready), .fl_busy(fl_busy_i), .p_valid(iv_pvalid), .p_addr(iv_paddr), .p_fault(iv_pfault), .p_cause(iv_pcause),
         .m_req(iw_req), .m_addr(iw_addr), .m_accept(iw_accept), .m_done(iw_done), .m_rdata(arbI_rdata), .st_hit(), .st_miss(), .st_walk(), .st_fault());
-    cache_dm #(.WR(0), .IDX(7), .STATS(0), .B2B(0)) u_ic(.clk(clk), .rst(rst), .inv(cache_inv | ic_inv_all), .inv_ln(ic_inv_ln), .inv_set(smc_set), .inv_tag(smc_tag), .wb_idle(), .req(ic_req), .we(1'b0), .addr(ic_addr), .wdata(64'd0), .be(8'd0),
+    cache_dm #(.WR(0), .IDX(7), .STATS(0), .B2B(0)) u_ic(.clk(clk), .rst(rst), .inv(cache_inv | ic_inv_all), .inv_ln(ic_inv_ln), .inv_set(smc_set), .inv_tag(smc_tag), .wb_idle(), .lk_set(lk_set), .lk_tag(lk_tag), .lk_hit(ic_lk_hit), .req(ic_req), .we(1'b0), .addr(ic_addr), .wdata(64'd0), .be(8'd0),
         .ready(ic_ready), .rvalid(ic_rvalid), .rdata(ic_rdata), .m_req(ic_mreq), .m_we(ic_mwe), .m_addr(ic_maddr), .m_wdata(ic_mwd), .m_be(ic_mbe),
         .m_accept(ic_maccept), .m_done(ic_mdone), .m_rdata(arbI_rdata), .st_rd_hit(), .st_rd_miss(), .st_wr(), .st_wr_hit());
 
@@ -111,6 +113,10 @@ module r8064_memsys #(parameter INIT_CYC = 20000, parameter REF_INT = 400)(
     wire dc_wacc = dc_req && c_d_we && dc_ready;
     always @(posedge clk) begin
         ic_inv_ln <= 1'b0; ic_inv_all <= 1'b0;
+        lk_v <= 1'b0;
+        if (smc_en && dc_wacc) begin lk_v <= 1'b1; lk_set <= dc_addr[8:2]; lk_tag <= dc_addr[19:9]; end
+        if (rst || smc_done) smc_miss <= 1'b1;
+        if (lk_v && ic_lk_hit) smc_miss <= 1'b0;
         if (rst) begin smc_pend <= 1'b0; smc_full <= 1'b0; smc_set <= 7'd0; end
         else if (smc_en && dc_wacc) begin
             if (smc_pend && (smc_set != dc_addr[8:2] || smc_tag != dc_addr[19:9])) smc_full <= 1'b1;
@@ -130,7 +136,7 @@ module r8064_memsys #(parameter INIT_CYC = 20000, parameter REF_INT = 400)(
         .fl_all(fl_all), .fl_va_en(fl_va_en), .fl_asid_en(fl_asid_en), .fl_va(fl_va), .fl_asid(fl_asid),
         .v_req(dv_req), .v_addr(c_d_pa), .v_acc(c_d_we ? 2'd1 : 2'd0), .ready(dv_ready), .fl_busy(fl_busy_d), .p_valid(dv_pvalid), .p_addr(dv_paddr), .p_fault(dv_pfault), .p_cause(dv_pcause),
         .m_req(dw_req), .m_addr(dw_addr), .m_accept(dw_accept), .m_done(dw_done), .m_rdata(arbD_rdata), .st_hit(), .st_miss(), .st_walk(), .st_fault());
-    cache_dm #(.WR(1), .IDX(7), .STATS(0), .B2B(0)) u_dc(.clk(clk), .rst(rst), .inv(cache_inv), .inv_ln(1'b0), .inv_set(7'd0), .inv_tag(11'd0), .wb_idle(dc_wb_idle), .req(dc_req), .we(c_d_we), .addr(dc_addr), .wdata(c_d_wd), .be(c_d_be),
+    cache_dm #(.WR(1), .IDX(7), .STATS(0), .B2B(0)) u_dc(.clk(clk), .rst(rst), .inv(cache_inv), .inv_ln(1'b0), .inv_set(7'd0), .inv_tag(11'd0), .wb_idle(dc_wb_idle), .lk_set(7'd0), .lk_tag(11'd0), .lk_hit(), .req(dc_req), .we(c_d_we), .addr(dc_addr), .wdata(c_d_wd), .be(c_d_be),
         .ready(dc_ready), .rvalid(dc_rvalid), .rdata(dc_rdata), .m_req(dc_mreq), .m_we(dc_mwe), .m_addr(dc_maddr), .m_wdata(dc_mwd), .m_be(dc_mbe),
         .m_accept(dc_maccept), .m_done(dc_mdone), .m_rdata(arbD_rdata), .st_rd_hit(), .st_rd_miss(), .st_wr(), .st_wr_hit());
 

@@ -22,7 +22,9 @@ module cache_dm #(parameter WR = 1, parameter WBD = 4, parameter IDX = 8, parame
     output reg  [31:0] st_rd_hit, st_rd_miss, st_wr, st_wr_hit,
     // REV56: invalidation of ONE line (inv_ln pulse, set inv_set; I cache, self-modifying code) and 'write buffer empty' (D cache)
     input  wire        inv_ln, input wire [IDX-1:0] inv_set, input wire [17-IDX:0] inv_tag,
-    output wire        wb_idle
+    output wire        wb_idle,
+    // REV56: line lookup (I cache): lk_hit = the line {lk_tag, lk_set} is valid, being filled, or a one-line invalidation is pending
+    input  wire [IDX-1:0] lk_set, input wire [17-IDX:0] lk_tag, output wire lk_hit
 );
     // ---------------- arrays
     localparam TB = 18 - IDX;   // tag bits
@@ -78,7 +80,8 @@ module cache_dm #(parameter WR = 1, parameter WBD = 4, parameter IDX = 8, parame
     wire        d0_we = wr_hit_upd || fill_wr;
     wire [IDX+1:0] d_wa = fill_wr ? {s1_set, fk} : s1_addr[IDX+1:0];
     wire [63:0] d_wd = fill_wr ? m_rdata : mrg;
-    wire [TB:0] t0_c = tC0[ln_set];
+    wire [TB:0] t0_c = tC0[ln_pend ? ln_set : lk_set];
+    assign lk_hit = ln_pend || (t0_c[TB] && t0_c[TB-1:0] == lk_tag) || ((fs != F_NORMAL) && s1_addr[19:2] == {lk_tag, lk_set});
     wire        ln_hit = t0_c[TB] && (t0_c[TB-1:0] == ln_tag);
     wire        ln_wr  = ln_pend && !sweeping && (fs != F_TAG) && ln_hit;
     wire        ln_done = ln_pend && !sweeping && (fs != F_TAG);

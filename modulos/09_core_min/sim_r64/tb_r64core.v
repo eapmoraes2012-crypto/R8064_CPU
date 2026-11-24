@@ -11,7 +11,7 @@ module tb_r64core;
     wire io_we, io_re; wire [7:0] io_a, io_wd;
     reg [7:0] io_n = 0, io_chk = 0; wire [7:0] io_rd = io_a + 8'd37 * io_n + io_chk;   // test port: read = C + 37*n + chk; write updates chk
     always @(posedge clk) begin if (io_re) io_n <= io_n + 8'd1; if (io_we) io_chk <= {io_chk[6:0], io_chk[7]} ^ io_wd ^ io_a; end
-    r8064_core_min dut(.i_flt(1'b0), .d_flt(1'b0), .i_cs(3'd0), .d_cs(3'd0), .clk(clk), .rst(rst), .irq(1'b0),
+    r8064_core_min dut(.smc_miss(1'b0), .i_flt(1'b0), .d_flt(1'b0), .i_cs(3'd0), .d_cs(3'd0), .clk(clk), .rst(rst), .irq(1'b0),
         .i_req(i_req), .i_addr(i_addr), .i_ack(i_ack), .i_rdata(i_rdata),
         .d_req(d_req), .d_we(d_we), .d_addr(d_addr), .d_size(d_size), .d_wdata(d_wdata), .d_be(d_be), .d_ack(d_ack), .d_rdata(d_rdata),
         .dbg_pc(dbg_pc), .dbg_f(dbg_f), .dbg_sig(dbg_sig), .gov_go(go), .gov_wait(1'b0), .port_c(8'd0), .gov_page(), .gov_op(), .gov_port(), .gov_cv(), .gov_alt_ev(), .gov_boundary(),
