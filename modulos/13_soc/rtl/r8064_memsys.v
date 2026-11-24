@@ -26,7 +26,10 @@ module r8064_memsys #(parameter INIT_CYC = 20000, parameter REF_INT = 400)(
     localparam S_IDLE = 2'd0, S_XL = 2'd1, S_CREQ = 2'd2, S_WAIT = 2'd3;
     // REV48: with the MMU off (en = 0 is a pure pass-through of the low 32 bits) the request skips the 2 translation clocks: IDLE -> CREQ directly
     reg smc_pend, smc_full, ic_inv_ln, ic_inv_all; reg [6:0] smc_set; reg [10:0] smc_tag; wire dc_wb_idle;
-    wire i_new   = (ist == S_IDLE) && c_i_req && !i_ack_r && !smc_pend && !ic_inv_ln;   // REV56: no fetch while a store's I-line invalidation is pending   // !i_ack_r: on the fault-ack clock the core still holds the request (do not accept again)
+    // REV56: while a store's I-line invalidation is pending, only fetches of THAT line wait (all fetches if two lines are pending); the
+    // prefetch of other lines goes on, so the refetch after the store finds them in the cache as before
+    wire smc_blk = (smc_pend && (smc_full || c_i_pa[22:5] == {smc_tag, smc_set})) || ic_inv_ln || ic_inv_all;
+    wire i_new   = (ist == S_IDLE) && c_i_req && !i_ack_r && !smc_blk;   // !i_ack_r: on the fault-ack clock the core still holds the request (do not accept again)
     wire i_byp   = i_new && !mmu_en;
     wire iv_req  = i_new && mmu_en;
     // REV54: with the MMU off the request goes to the I-cache in the SAME clock (IDLE -> WAIT): 2 clocks per fetch instead of 3
