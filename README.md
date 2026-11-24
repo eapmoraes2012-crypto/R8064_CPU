@@ -5,7 +5,7 @@ Clock target: 57.28 MHz (3.58 MHz x 16).
 
 **Preliminary 2026** (REV48, 20/11/2026). First run on the Tang Nano 20K on 20/11/2026: the core runs from the embedded SDRAM and 256 of 256 measured instruction timings equal the simulation (timing bench, `modulos/13_soc/bench`). The MSX cartridge has not been tested on hardware yet.
 
-**Datasheet:** [R8064 Datasheet, edition 1.0 (architecture and interfaces, REV54)](docs/R8064_Datasheet.md), with the complete instruction list (Appendix C) and the measured timing (Appendix D, timing edition pending the REV55 board run); Appendix B, instruction tables by group: [docs/R8064_Datasheet_Appendix_B.md](docs/R8064_Datasheet_Appendix_B.md). Timing spreadsheet: [docs/timings](docs/timings).
+**Datasheet:** [R8064 Datasheet, edition 1.1 (architecture and interfaces, REV56)](docs/R8064_Datasheet.md), with the complete instruction list (Appendix C) and the measured timing (Appendix D, timing edition pending the REV55 board run); Appendix B, instruction tables by group: [docs/R8064_Datasheet_Appendix_B.md](docs/R8064_Datasheet_Appendix_B.md). Timing spreadsheet: [docs/timings](docs/timings).
 
 **MSX software:** user guide [docs/R8064_MSX_Software.md](docs/R8064_MSX_Software.md); files in [modulos/13_soc/msx](modulos/13_soc/msx/README.md) — `R8064.COM` (MSX-DOS) and the `r8064io.asm` Z80 driver to send and read data and programs to/from the R8064 through ports 0Bh–0Dh.
 
